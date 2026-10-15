@@ -87,6 +87,9 @@ class Utilisateur(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     derniere_connexion_le: Mapped[Horodatage | None]
+    # Limitation des tentatives de connexion par mot de passe (NF-05)
+    echecs_connexion: Mapped[int] = mapped_column(SmallInteger, default=0, server_default="0")
+    verrouille_jusqu_le: Mapped[Horodatage | None]
 
     livreur: Mapped["Livreur | None"] = relationship(
         back_populates="utilisateur", foreign_keys="Livreur.utilisateur_id", lazy="raise"

@@ -26,7 +26,24 @@ class Parametres(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     jwt_secret: str = "mon_jwt_secret_aleatoire_pour_le_projet_SMA."
-
+    jwt_acces_minutes: int = 15
+    jwt_refresh_jours: int = 7
+ 
+    # Environnement : "dev" autorise l'envoi de SMS simulé (le code s'affiche dans les journaux).
+    environnement: str = "dev"
+    sms_mode: str = "console"
+    indicatif_pays_defaut: str = "225"
+ 
+    # Codes de vérification SMS (NF-05 : limitation des tentatives)
+    code_validite_secondes: int = 300
+    code_tentatives_max: int = 5
+    codes_max_par_fenetre: int = 3
+    codes_fenetre_secondes: int = 600
+ 
+    # Connexion par mot de passe (répartiteurs et administrateurs)
+    connexion_tentatives_max: int = 5
+    connexion_verrouillage_secondes: int = 900
+ 
     @property
     def postgres_dsn(self) -> str:
         """Adresse de connexion « brute » (asyncpg, psql). Le mot de passe est encodé."""
@@ -53,3 +70,4 @@ class Parametres(BaseSettings):
  
  
 parametres = Parametres()
+ 

@@ -1,19 +1,16 @@
 """Tests du schéma sur une vraie base PostgreSQL/PostGIS.
 
 Prérequis : `docker compose up -d` puis `alembic upgrade head`.
-Chaque test est exécuté dans une transaction annulée à la fin : la base reste intacte.
-Si la base n'est pas joignable ou pas migrée, les tests sont ignorés (et non en échec).
+La fixture `session` (tests/conftest.py) annule tout à la fin de chaque test.
 """
 
 import uuid
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import func, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from livraison.config import parametres
 from livraison.persistance.enums import (
     EtatCommande,
     EtatPaiement,
@@ -36,27 +33,6 @@ from livraison.persistance.modeles import (
 
 def _point(lon: float, lat: float):
     return func.ST_GeogFromText(f"SRID=4326;POINT({lon} {lat})")
-
-
-@pytest_asyncio.fixture
-async def session():
-    moteur = create_async_engine(parametres.sqlalchemy_url)
-    try:
-        async with moteur.connect() as cx:
-            await cx.execute(text("SELECT 1 FROM utilisateur LIMIT 1"))
-    except Exception as e:  # noqa: BLE001
-        await moteur.dispose()
-        pytest.skip(
-            f"Base non prête (docker compose up -d, puis alembic upgrade head) : {type(e).__name__}"
-        )
-    async with moteur.connect() as cx:
-        transaction = await cx.begin()
-        async with AsyncSession(
-            bind=cx, expire_on_commit=False, join_transaction_mode="create_savepoint"
-        ) as s:
-            yield s
-        await transaction.rollback()
-    await moteur.dispose()
 
 
 def _utilisateur(telephone: str, role: Role) -> Utilisateur:

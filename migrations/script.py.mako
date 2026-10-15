@@ -8,7 +8,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-import geoalchemy2
+import geoalchemy2  # noqa: F401
 ${imports if imports else ""}
 
 revision: str = ${repr(up_revision)}
