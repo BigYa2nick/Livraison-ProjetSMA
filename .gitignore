@@ -13,3 +13,8 @@ donnees/osrm/*
 # Base du serveur XMPP de développement
 *.db
 *.sqlite
+data/
+server.db*
+xmpp_sonde.log
+diagnostic_xmpp.log
+serveur_xmpp.log

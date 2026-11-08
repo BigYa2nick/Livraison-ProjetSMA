@@ -1,5 +1,6 @@
 # Services du projet. Démarrage : docker compose up -d
-# Le moteur d'itinéraires est optionnel : docker compose --profile itineraires up -d
+# Le moteur d'itinéraires (OSRM) est dans docker-compose.osrm.yml :
+#   docker compose -f docker-compose.osrm.yml up -d
 
 services:
   postgres:
@@ -29,16 +30,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  osrm:
-    image: ghcr.io/project-osrm/osrm-backend:latest
-    profiles: ["itineraires"]
-    restart: unless-stopped
-    command: osrm-routed --algorithm mld /data/carte.osrm
-    ports:
-      - "127.0.0.1:5000:5000"
-    volumes:
-      - ./donnees/osrm:/data
 
 volumes:
   donnees_postgres:

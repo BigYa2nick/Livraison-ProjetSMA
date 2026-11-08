@@ -1,0 +1,28 @@
+[project]
+name = "livreur-gps"
+version = "0.1.0"
+description = "Prototype GPS du livreur (projet Livraison SMA)"
+requires-python = ">=3.11"
+dependencies = [
+    "flet==1.0.4",
+    "flet-geolocator==1.0.4",
+    "httpx>=0.27",
+]
+
+[tool.flet]
+org = "ci.univ.livraison"
+product = "Livreur GPS"
+company = "Livraison SMA"
+# Pose les autorisations de position Android (précise, approximative, arrière-plan).
+permissions = ["location"]
+
+[tool.flet.app]
+path = "src"
+
+# Autorisations nécessaires au service de localisation au premier plan (Android 9 à 14 et plus).
+[tool.flet.android.permission]
+"android.permission.INTERNET" = true
+"android.permission.FOREGROUND_SERVICE" = true
+"android.permission.FOREGROUND_SERVICE_LOCATION" = true
+"android.permission.POST_NOTIFICATIONS" = true
+"android.permission.WAKE_LOCK" = true

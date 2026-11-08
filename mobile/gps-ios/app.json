@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Livreur GPS",
+    "slug": "gps-ios",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ci.livraisonsma.livreur",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Livraison SMA utilise votre position pour suivre vos courses en direct."
+        }
+      ],
+      "expo-status-bar"
+    ]
+  }
+}

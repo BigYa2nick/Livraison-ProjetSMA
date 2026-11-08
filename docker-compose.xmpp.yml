@@ -1,0 +1,19 @@
+# Serveur XMPP de développement dans Docker (remplace « spade run » lancé sous Windows).
+#
+#   docker compose -f docker-compose.xmpp.yml up -d --build     # démarrer (1re fois : ~1 minute)
+#   docker compose -f docker-compose.xmpp.yml logs --tail 30    # lire son journal
+#   docker compose -f docker-compose.xmpp.yml down              # arrêter
+#
+# Un seul serveur XMPP à la fois : arrête « spade run » avant, le port 5222 ne peut servir qu'à un seul.
+# XMPP_DOMAINE vient de .env (par défaut 127.0.0.1) : c'est aussi le domaine que les agents utilisent.
+name: livraison-xmpp
+
+services:
+  xmpp:
+    build: ./docker/xmpp
+    container_name: livraison-xmpp
+    environment:
+      XMPP_DOMAINE: ${XMPP_DOMAINE:-127.0.0.1}
+    ports:
+      - "127.0.0.1:5222:5222"
+    restart: unless-stopped

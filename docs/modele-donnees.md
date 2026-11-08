@@ -1,7 +1,8 @@
 # Modèle de données — Livraison SMA
 
 Lot 1 (conception et socle). Base PostgreSQL 16 + PostGIS 3.4, modèles SQLAlchemy dans
-`src/livraison/persistance/`, schéma créé par la migration `migrations/versions/0001_schema_initial.py`.
+`src/livraison/persistance/`, schéma créé par la migration `migrations/versions/0001_schema_initial.py`,
+puis complété par `0002` (verrouillage des connexions) et `0003` (dossier livreur, voir `dossier-livreur.md`).
 
 ## Schéma
 
@@ -10,6 +11,7 @@ erDiagram
     UTILISATEUR ||--o| LIVREUR : "profil"
     UTILISATEUR ||--o{ ADRESSE : "possede"
     UTILISATEUR ||--o{ COMMANDE : "passe"
+    UTILISATEUR |o--o{ DOCUMENT_LIVREUR : "examine"
     LIVREUR |o--o{ COMMANDE : "est assigne a"
     LIVREUR ||--o{ POSITION : "emet"
     LIVREUR ||--o{ DOCUMENT_LIVREUR : "fournit"
@@ -32,8 +34,20 @@ erDiagram
         string type_vehicule
         int capacite_kg
         string statut_validation
+        string motif_rejet
         bool en_ligne
         geography derniere_position
+    }
+    DOCUMENT_LIVREUR {
+        uuid id PK
+        uuid livreur_id FK
+        string type
+        string chemin_fichier
+        string type_mime
+        int taille_octets
+        string statut
+        string motif_refus
+        uuid examine_par_id FK
     }
     COMMANDE {
         uuid id PK
@@ -71,7 +85,7 @@ erDiagram
 
 Hors schéma : `CODE_VERIFICATION` (codes SMS, lié au téléphone et non à un compte, car il sert
 avant la création du compte) et `ZONE_SERVICE` (polygones des zones de service). `POSITION`,
-`DOCUMENT_LIVREUR`, `ADRESSE`, `FACTURE` et `EVALUATION` apparaissent avec leurs liens mais sans leurs colonnes.
+`ADRESSE`, `FACTURE` et `EVALUATION` apparaissent avec leurs liens mais sans leurs colonnes.
 
 ## Correspondance avec le cahier des charges
 
@@ -106,6 +120,11 @@ avant la création du compte) et `ZONE_SERVICE` (polygones des zones de service)
   Pour rester compatible avec le droit à l'effacement (NF-07), il ne contient que des identifiants, jamais de nom
   ni de téléphone.
 - **Codes SMS et codes de livraison hachés**, jamais stockés en clair (NF-05).
+- **Dossier livreur (F-03).** Les pièces justificatives sont des fichiers stockés hors de la base (le
+  chemin seul est en base) ; `document_livreur` garde le type détecté sur le contenu, la taille, la
+  décision et qui l'a prise. Une seule pièce par type et par livreur (contrainte d'unicité), et un
+  refus porte toujours un motif (contrainte CHECK). Les décisions de l'administrateur vont au journal
+  `evenement` (type `action_manuelle`), avec des identifiants seulement.
 - **Incidents (F-24)** : enregistrés comme événements de type `incident`, sans table à part pour le moment.
 
 ## Ce qui n'est pas encore modélisé

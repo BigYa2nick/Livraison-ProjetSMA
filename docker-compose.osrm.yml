@@ -1,0 +1,29 @@
+# Serveurs d'itinéraires OSRM (F-42) : un par profil de véhicule.
+# Les données doivent d'abord être préparées : python scripts/preparer_osrm.py
+#
+#   docker compose -f docker-compose.osrm.yml up -d      démarrer
+#   docker compose -f docker-compose.osrm.yml ps         voir l'état
+#   docker compose -f docker-compose.osrm.yml down       arrêter
+#
+# Le projet porte son propre nom : il n'interfère pas avec docker-compose.yml (PostgreSQL, Redis).
+name: livraison-osrm
+
+services:
+  osrm-voiture:
+    # Version figée : un changement de version d'OSRM impose de refaire la préparation des données.
+    image: ${OSRM_IMAGE:-ghcr.io/project-osrm/osrm-backend:v5.27.1}
+    command: osrm-routed --algorithm mld /data/carte.osrm
+    volumes:
+      - ./data/osrm/car:/data
+    ports:
+      - "127.0.0.1:5000:5000" # accessible depuis ce PC seulement
+    restart: unless-stopped
+
+  osrm-velo:
+    image: ${OSRM_IMAGE:-ghcr.io/project-osrm/osrm-backend:v5.27.1}
+    command: osrm-routed --algorithm mld /data/carte.osrm
+    volumes:
+      - ./data/osrm/bicycle:/data
+    ports:
+      - "127.0.0.1:5001:5000"
+    restart: unless-stopped

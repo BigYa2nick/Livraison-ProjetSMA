@@ -141,6 +141,8 @@ class Livreur(Base):
     )
     valide_par_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("utilisateur.id"))
     valide_le: Mapped[Horodatage | None]
+    # Motif du dernier rejet ou de la dernière suspension du dossier (affiché au livreur).
+    motif_rejet: Mapped[str | None] = mapped_column(String(300))
     en_ligne: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     note_moyenne: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
     nb_evaluations: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -159,9 +161,19 @@ class Livreur(Base):
 
 
 class DocumentLivreur(Base):
-    """Pièce justificative du dossier livreur (identité, permis, carte grise, photo)."""
+    """Pièce justificative du dossier livreur (identité, permis, carte grise, photo).
+
+    Un livreur a au plus une pièce par type : déposer à nouveau un type remplace la pièce
+    précédente (tant qu'elle n'est pas acceptée). Le fichier est stocké hors de la base ;
+    `chemin_fichier` est relatif au dossier de stockage (`STOCKAGE_PIECES_DIR`).
+    """
 
     __tablename__ = "document_livreur"
+    __table_args__ = (
+        UniqueConstraint("livreur_id", "type", name="uq_document_livreur_un_par_type"),
+        # Refuser une pièce sans dire pourquoi n'aiderait pas le livreur à la corriger.
+        CheckConstraint("statut <> 'refuse' OR motif_refus IS NOT NULL", name="motif_si_refuse"),
+    )
 
     id: Mapped[uuid.UUID] = cle_uuid()
     livreur_id: Mapped[uuid.UUID] = mapped_column(
@@ -169,13 +181,17 @@ class DocumentLivreur(Base):
     )
     type: Mapped[TypeDocument] = mapped_column(colonne_enum(TypeDocument))
     chemin_fichier: Mapped[str] = mapped_column(String(500))  # le fichier n'est pas en base
+    type_mime: Mapped[str | None] = mapped_column(String(100))  # détecté sur le contenu
+    taille_octets: Mapped[int | None] = mapped_column(Integer)
     statut: Mapped[StatutDocument] = mapped_column(
         colonne_enum(StatutDocument),
         default=StatutDocument.EN_ATTENTE,
         server_default=StatutDocument.EN_ATTENTE.value,
     )
     motif_refus: Mapped[str | None] = mapped_column(String(300))
-    cree_le: Mapped[DateCreation]
+    examine_par_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("utilisateur.id"))
+    examine_le: Mapped[Horodatage | None]
+    cree_le: Mapped[DateCreation]  # date de dépôt du fichier actuel
 
     livreur: Mapped[Livreur] = relationship(back_populates="documents", lazy="raise")
 

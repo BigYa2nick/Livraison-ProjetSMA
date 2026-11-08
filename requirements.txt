@@ -16,3 +16,6 @@ redis>=5.0
 flet>=1.0,<2
 # Optimisation de tournées
 ortools>=9.10
+flet-map>=1.0,<2
+python-multipart
+httpx

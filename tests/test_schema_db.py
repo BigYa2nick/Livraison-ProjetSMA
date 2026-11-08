@@ -1,4 +1,4 @@
-"""Tests du schéma sur une vraie base PostgreSQL/PostGIS.
+﻿"""Tests du schéma sur une vraie base PostgreSQL/PostGIS.
 
 Prérequis : `docker compose up -d` puis `alembic upgrade head`.
 La fixture `session` (tests/conftest.py) annule tout à la fin de chaque test.
@@ -40,8 +40,8 @@ def _utilisateur(telephone: str, role: Role) -> Utilisateur:
 
 
 async def _creer_client_et_livreur(s: AsyncSession):
-    client = _utilisateur("+2250700000001", Role.CLIENT)
-    livreur_u = _utilisateur("+2250700000002", Role.LIVREUR)
+    client = _utilisateur("+2259900000001", Role.CLIENT)
+    livreur_u = _utilisateur("+2259900000002", Role.LIVREUR)
     s.add_all([client, livreur_u])
     await s.flush()
     livreur = Livreur(utilisateur_id=livreur_u.id, type_vehicule=TypeVehicule.MOTO, capacite_kg=20)
@@ -58,7 +58,7 @@ def _commande(client_id, **kw) -> Commande:
         adresse_livraison="Cocody",
         livraison=_point(-3.9870, 5.3480),
         destinataire_nom="Awa",
-        destinataire_telephone="+2250700000003",
+        destinataire_telephone="+2259900000003",
         prix_xof=1500,
         **kw,
     )
@@ -83,7 +83,7 @@ async def test_telephone_invalide_refuse(session):
 
 async def test_telephone_unique(session):
     session.add_all(
-        [_utilisateur("+2250700000009", Role.CLIENT), _utilisateur("+2250700000009", Role.CLIENT)]
+        [_utilisateur("+2259900000009", Role.CLIENT), _utilisateur("+2259900000009", Role.CLIENT)]
     )
     with pytest.raises(IntegrityError):
         await session.flush()
@@ -115,7 +115,7 @@ async def test_prix_negatif_refuse(session):
 
 async def test_une_seule_offre_retenue_par_tour(session):
     client, livreur = await _creer_client_et_livreur(session)
-    autre = _utilisateur("+2250700000004", Role.LIVREUR)
+    autre = _utilisateur("+2259900000004", Role.LIVREUR)
     session.add(autre)
     await session.flush()
     session.add(Livreur(utilisateur_id=autre.id, type_vehicule=TypeVehicule.VELO, capacite_kg=5))
