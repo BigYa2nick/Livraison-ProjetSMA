@@ -28,8 +28,9 @@ MESURE = datetime(2026, 10, 24, 12, 0, tzinfo=UTC)
 
 
 class FauxAgent:
-    def __init__(self, livreur_id, position=None, mesure_le=None):
+    def __init__(self, livreur_id, position=None, mesure_le=None, charge=0):
         self.livreur_id, self.position, self.mesure_le = livreur_id, position, mesure_le
+        self.charge = charge
         self.positions: list[tuple] = []
         self.arrete = False
         self.erreur_a_l_arret = False
@@ -65,30 +66,35 @@ class Horloge:
 class Banc:
     """Un gestionnaire avec de faux agents, une fausse base et une fausse horloge."""
 
-    def __init__(self, en_ligne=(), positions=None, grace=30.0, redis_reel=False):
+    def __init__(self, en_ligne=(), positions=None, grace=30.0, redis_reel=False, charges=None):
         self.en_ligne = list(en_ligne)
         self.horloge = Horloge()
         self.crees: list[FauxAgent] = []
         self.refuser: set[str] = set()
+        self.charges = charges or {}
         self.gestionnaire = GestionnaireAgents(
             fabrique=self.fabrique,
             lire_en_ligne=self.lire,
+            lire_charge=self.lire_charge,
             creer_redis_fn=creer_redis if redis_reel else (lambda: FauxRedisLecture(positions)),
             horloge=self.horloge,
             delai_grace_s=grace,
         )
 
     async def fabrique(
-        self, livreur_id, type_vehicule, capacite_kg, *, position=None, mesure_le=None
+        self, livreur_id, type_vehicule, capacite_kg, *, charge=0, position=None, mesure_le=None
     ):
         if livreur_id in self.refuser:
             raise ConnectionError("XMPP injoignable")
-        agent = FauxAgent(livreur_id, position, mesure_le)
+        agent = FauxAgent(livreur_id, position, mesure_le, charge)
         self.crees.append(agent)
         return agent
 
     async def lire(self):
         return list(self.en_ligne)
+
+    async def lire_charge(self, livreur_id):
+        return self.charges.get(livreur_id, 0)
 
     @property
     def agents(self):
@@ -121,6 +127,12 @@ async def test_agent_cree_avec_la_derniere_position_connue():
     b = Banc(positions=redis)
     await b.gestionnaire.traiter_evenement(en_ligne())
     assert b.crees[0].position == (5.33, -4.01) and b.crees[0].mesure_le == MESURE
+
+
+async def test_reconciliation_reconstruit_la_charge_du_livreur():
+    b = Banc(en_ligne=[L1], charges={"livreur-1": 2})
+    assert await b.gestionnaire.reconcilier() == (["livreur-1"], [])
+    assert b.crees[0].charge == 2
 
 
 async def test_livreur_hors_ligne_retire_et_arrete_l_agent():

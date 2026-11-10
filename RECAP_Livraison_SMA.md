@@ -1,7 +1,7 @@
-# Récap : projet Livraison SMA (au 6 novembre 2026)
+# Récap : projet Livraison SMA (au 10 novembre 2026)
 
-Récapitulatif complet du projet, pour **reprendre dans une nouvelle discussion**. Il remplace le récap du
-26 octobre. À placer à la racine du dépôt (`livraison-sma/RECAP_Livraison_SMA.md`, à côté de `LANCEMENT.md`).
+Récapitulatif complet du projet, pour **reprendre dans une nouvelle discussion**. Le cahier des charges de référence est la version 2.0
+fournie avec le projet.
 
 ## Sommaire
 
@@ -20,15 +20,15 @@ Récapitulatif complet du projet, pour **reprendre dans une nouvelle discussion*
 
 Plateforme de livraison urbaine à **Abidjan**, avec attribution des courses par **appel d'offres
 (Contract Net)** entre agents. Projet du module Systèmes multi-agents (Master 2, BD & GL). Travail en solo
-pour l'instant. Le cahier de référence est la **version 3.0**
-(`Cahier_des_charges_Livraison_SMA_v3.docx`), qui découpe le travail en 8 lots.
+pour l'instant. Le cahier de référence est la **version 2.0**
+(`Cahier_des_charges_Livraison_SMA_v2.docx`), qui découpe le travail en lots.
 
 | Brique | Technologie |
 |---|---|
 | Serveur et agents | Python 3.13, FastAPI, SPADE 4.1.4 (XMPP), PostgreSQL 16 + PostGIS, Redis |
 | Serveur XMPP | Celui de SPADE (pyjabber 0.4.5), **dans Docker (Linux)** : sous Windows, `spade run` bloque une partie des connexions |
 | Itinéraires | OSRM auto-hébergé (v5.27.1), deux serveurs : voiture (aussi pour la moto) et vélo |
-| App livreur | React Native / **Expo SDK 57** (iPhone, Expo Go) ; prototype Flet pour PC et Android |
+| App livreur | React Native / **Expo SDK 58** (iPhone, Expo Go) ; Flet pour PC et Android |
 | Interfaces web (plus tard) | React : espace client, console du répartiteur, administration |
 | Dépôt | Un seul dépôt GitHub privé |
 
@@ -70,10 +70,10 @@ Détail : `docs/conception/06-decisions.md` (D-01 à D-10). **Je n'ai jamais re�
 D-03, D-04, D-06 : elles sont implémentées telles que proposées, à valider (D-07 à D-10 aussi).**
 
 Autres choix :
-- **Expo SDK 57** : l'App Store n'installe que la dernière version d'Expo Go, donc le projet est figé sur le SDK de ton Expo Go.
+- **Expo SDK 58** : le projet mobile iOS et ses dépendances sont alignés sur le SDK requis par ton Expo Go.
 - **Tests sur une base séparée** (`livraison_test`), jamais sur la base de développement.
-- **`LIVREUR_VALIDATION_REQUISE=false`** en développement : un livreur non validé peut passer en ligne, mais le Dispatcher
-  ne consulte que les livreurs pour lesquels `peut_recevoir_des_courses` est vrai (dossier validé).
+- **`LIVREUR_VALIDATION_REQUISE=false`** en développement : les livreurs en attente peuvent tester les courses ;
+  les profils suspendus ou rejetés restent exclus. En production, la validation est obligatoire.
 - **127.0.0.1 partout** (PostgreSQL, Redis, OSRM, XMPP) : sous Windows, `localhost` désigne `::1` avant `127.0.0.1`.
 - **Appli iPhone au premier plan seulement** : le suivi écran verrouillé demande un development build (hors lot 1).
 - **Valeurs de l'attribution à calibrer** avec des essais réels (`docs/contract-net.md`, § 6) : collecte 3 s, confirmation 30 s,
@@ -91,7 +91,7 @@ Autres choix :
 | Base de données dédiée aux tests | fait |
 | Dossier de conception : cas d'utilisation, états, séquences, 9 maquettes, décisions, budget | fait (`docs/conception/`) |
 
-### Lot 2 : cœur multi-agents, **presque terminé**
+### Lot 2 : cœur multi-agents, **fonctionnel et testé**
 
 | Exigence | État |
 |---|---|
@@ -102,17 +102,18 @@ Autres choix :
 | F-32 concurrence et capacité | **fait** (garde-fou de charge en base, scénario de deux commandes pour un livreur) |
 | F-33 file d'attente et relance, rayon élargi, alerte du répartiteur | **fait** (la réattribution manuelle est au lot 6) |
 | F-63 journal des messages entre agents (table `evenement`, type `message_agent`) | **fait** pour le Contract Net |
-| F-35 priorité urgente | **transmise seulement** dans l'appel d'offres : ne change pas encore l'ordre de traitement |
-| Essai complet à la main (livreur réel en ligne, commande de test, confirmation par Swagger) | **à faire** (`LANCEMENT.md`, § 4) |
+| F-35 priorité urgente (importante selon le cahier v2) | **fait** : urgentes d'abord dans la file et dans les décisions concurrentes du Dispatcher |
+| F-36 reprise après redémarrage (importante selon le cahier v2) | **implémentée** : gestionnaires reconstruits depuis la base, charge du livreur restaurée depuis les commandes/offres en cours ; les courses actives sont relues depuis la base |
+| Essai complet à la main (livreur en ligne, commande de test, confirmation) | **à faire sur ton environnement** (`LANCEMENT.md`, § 4) |
 
-Reprise après redémarrage (F-36), détour dans le coût, regroupement : **lot 7**. Charge d'un agent recréé : repart de 0
-(la base empêche tout dépassement).
+F-36 est à valider par un redémarrage réel des services et une course en cours. Les calculs de détour et le
+regroupement ne sont pas inclus dans ce lot.
 
 ### Lots suivants (cahier § 8.2)
 
 | Lot | Contenu |
 |---|---|
-| 3 | Application livreur iOS complète : propositions (écran), guidage sur carte, remise avec code, incidents |
+| 3 | Application livreur : propositions, guidage, remise avec code et incidents ; parcours d'incident ajoutés dans les apps, validation terrain restante |
 | 4 | Espace client web (React) : commande, suivi |
 | 5 | Paiement et facturation |
 | 6 | Console du répartiteur et administration (React) : la console Flet actuelle est provisoire ; réattribution manuelle |
@@ -127,14 +128,20 @@ Reprise après redémarrage (F-36), détour dans le coût, regroupement : **lot 
    Guide : `docs/contract-net.md`.
 2. **Gestionnaires** : le gestionnaire des livreurs transmet `commande_validee` au gestionnaire des commandes et les
    réponses des livreurs à leurs agents ; les agents Commande sont créés à l'événement puis par réconciliation.
-3. **Tests** : 187 nouveaux tests du Contract Net (dont 7 avec de vrais agents XMPP), 11 pour le script de mot de passe.
+3. **Priorité et reprise** : F-35 ordonne la file et les décisions concurrentes. F-36 restaure la charge du livreur depuis la
+   base lors de la recréation de son agent ; la course active est déjà une donnée persistée accessible par l'API.
+4. **Applications livreur** : Expo SDK 58 et Flet proposent maintenant les actions de base du lot 3 : proposition
+   (acceptation, refus, priorité), course active, itinéraire, appel, enlèvement, code de livraison et signalement des
+   quatre incidents F-24. Le serveur enregistre le motif en événement et termine la tentative en `echec_livraison`.
+   Les essais complets sur appareils et en conditions terrain restent à faire.
+5. **Tests** : 187 nouveaux tests du Contract Net (dont 7 avec de vrais agents XMPP), 11 pour le script de mot de passe.
    **14 défauts volontaires** introduits dans le code : tous détectés.
-4. **Serveur XMPP** : plusieurs jours de diagnostic (`localhost` en IPv6, tests de plus de 40 minutes, serveur Windows bloqué
+6. **Serveur XMPP** : plusieurs jours de diagnostic (`localhost` en IPv6, tests de plus de 40 minutes, serveur Windows bloqué
    après le passage en TLS), réglés en lançant le serveur dans Docker (`docker-compose.xmpp.yml`). Détail et chronologie :
    `docs/xmpp-depannage.md`. Outil : `scripts/diagnostic_xmpp.py`.
-5. **Scripts** : `scripts/creer_commande_test.py` (commande de test + suivi de l'attribution),
+7. **Scripts** : `scripts/creer_commande_test.py` (commande de test + suivi de l'attribution),
    `scripts/reinitialiser_mot_de_passe.py` (mot de passe d'un répartiteur ou administrateur oublié).
-6. **Documentation** : `LANCEMENT.md`, `docs/agents.md`, `docs/contract-net.md`, `docs/xmpp-depannage.md`, ce récap.
+8. **Documentation** : `LANCEMENT.md`, `docs/agents.md`, `docs/contract-net.md`, `docs/xmpp-depannage.md`, ce récap.
 
 Avant cela (récap du 26 octobre) : suivi GPS validé sur iPhone, dossier livreur F-03, base de test, dossier de conception,
 service OSRM, Annuaire, agent Livreur et gestionnaire.
@@ -169,7 +176,7 @@ livraison-sma/
 │   ├── services/                     auth, securite, sms, livreurs, positions, redis_client, dossier,
 │   │                                 itineraires, evenements, erreurs, attribution, courses
 │   └── interfaces/                   console_suivi.py (carte du répartiteur, Flet)
-├── tests/                            conftest, aides, aides_commandes, aides_xmpp, test_* (464 tests au total)
+├── tests/                            conftest, aides, aides_commandes, aides_xmpp, test_*
 ├── mobile/
 │   ├── livreur/                      app Flet (PC, Android) : attention, son main.py n'est pas celui du serveur
 │   └── gps-ios/                      app Expo (iPhone) : App.tsx, src/, README
@@ -224,17 +231,13 @@ pytest                                                                    # test
 
 ## 8. Vérifié et non vérifié
 
-**Vérifié chez toi** (Windows, Python 3.13) :
-- le suivi GPS de bout en bout sur ton iPhone et sur la carte du répartiteur ;
-- **433 tests passent** sans le serveur XMPP, et les **16 tests d'agents réels passent** avec le serveur Docker (6 novembre) ;
-- OSRM : `verifier_osrm.py`, 8 trajets plausibles.
-
-**Vérifié de mon côté** (Linux, vrai PostgreSQL/PostGIS, vrai Redis, vrai serveur XMPP) : la suite complète plusieurs fois
-de suite, 14 défauts volontaires du Contract Net tous détectés, `python -m livraison.agents` qui démarre et lance des tours.
+**Vérifié dans le dépôt courant** :
+- dernière suite complète effectuée avant les modifications présentes : **278 passés, 211 ignorés** sans le serveur XMPP ;
+- les tests ciblés F-35/F-36 et des clients doivent être relancés après cette mise à jour.
 
 **Non vérifié** :
 - un **essai complet à la main** : livreur réel en ligne, `creer_commande_test.py`, confirmation par Swagger ;
-- les trois routes de proposition de course avec l'**app mobile** (l'écran n'existe pas encore) ;
+- un parcours de course réel Expo/Flet de bout en bout, notamment après redémarrage des services ;
 - ton `services/dossier.py` réel : j'ai utilisé la signature vue dans tes tests (tes tests de dossier passent) ;
 - `scripts/creer_personnel.py --role administrateur`, jamais relu ;
 - les prix du budget (le poste dominant est le **SMS**, 0,25 à 0,50 USD le code) et la console Flet (`console_suivi.py`) ;
@@ -247,13 +250,15 @@ de suite, 14 défauts volontaires du Contract Net tous détectés, `python -m li
 1. Copier les fichiers de la dernière livraison (chemin et action de chacun : `docs/contract-net.md`, § 1).
 2. Vérifier que `.gitignore` contient : `.env`, `.venv/`, `data/`, `stockage/`, `node_modules/`, `__pycache__/`, `server.db*`,
    `xmpp_sonde.log`, `diagnostic_xmpp.log`, `serveur_xmpp.log`.
-3. Lancer `pytest` en entier avec le serveur XMPP démarré : 464 tests, aucun ignoré. Noter le résultat.
+3. Relancer les tests ciblés puis `pytest` en entier avec le serveur XMPP démarré ; noter les résultats et les tests ignorés.
 4. `git status` : ne jamais commiter `.env`, `server.db*`, les journaux, `data/` ni `stockage/`.
 
 ### Étape suivante possible (à choisir)
 
-- **Terminer le lot 2** : essai complet à la main, priorité urgente (F-35), calibrage des réglages (`docs/contract-net.md`, § 6).
-- **Lot 3** : écran de proposition de course dans l'app livreur (les routes existent), guidage, remise avec code, incidents.
+- **Valider le lot 2 sur ton environnement** : redémarrage pendant une course, essai complet à la main et calibrage
+  des réglages (`docs/contract-net.md`, §§ 6 et 11).
+- **Valider le lot 3** : essayer les quatre motifs d'incident et le parcours complet sur appareils iOS/Android ;
+  le comportement de la tentative après incident est documenté dans `docs/conception/04-maquettes.md`.
 
 ### Questions à trancher
 
@@ -272,7 +277,7 @@ de suite, 14 défauts volontaires du Contract Net tous détectés, `python -m li
 | Fichier | Pourquoi |
 |---|---|
 | `RECAP_Livraison_SMA.md` (ce fichier) et `LANCEMENT.md` | contexte et commandes |
-| `Cahier_des_charges_Livraison_SMA_v3.docx` | référence des exigences |
+| `Cahier_des_charges_Livraison_SMA_v2.docx` | référence des exigences |
 | `docs/contract-net.md`, `docs/agents.md`, `docs/xmpp-depannage.md` | ce qui est construit et comment le lancer |
 | `docs/conception/06-decisions.md`, `02-diagrammes-etats.md`, `03-sequences-protocole.md` | décisions, états et protocole |
 | `src/livraison/agents/` : tous les fichiers (`protocole.py`, `registre.py`, `annuaire.py`, `livreur.py`, `dispatcher.py`, `commande.py`, `gestionnaire.py`, `gestionnaire_commandes.py`, `__main__.py`, `ping_pong.py`, `__init__.py`) | le code des agents |
@@ -311,10 +316,10 @@ Si le nombre de fichiers est trop grand, un **zip du dépôt** convient (sans le
 
 ### Message à coller pour commencer
 
-> Je continue mon projet Livraison SMA (récap joint). Le lot 1 est terminé. Au lot 2, le Contract Net est fait et
-> validé chez moi (agents Commande, Dispatcher, Livreur ; coût sur l'itinéraire réel ; confirmation en 30 s ;
-> serveur XMPP dans Docker). Résultat de `pytest` chez moi : [colle le résumé]. Prochaine étape : [terminer le
-> lot 2 : essai complet et priorité urgente / lot 3 : écran de proposition dans l'app livreur]. Je valide / je
+> Je continue mon projet Livraison SMA (récap joint, cahier des charges v2). Le cœur du lot 2 est implémenté :
+> Contract Net, priorité urgente et reconstruction des agents/charges depuis la base. Résultat de `pytest` chez moi :
+> [colle le résumé]. Prochaine étape : valider F-36 par redémarrage pendant une course puis terminer le lot 3.
+> Je valide / je
 > modifie les décisions D-02, D-03, D-04, D-06 et D-07 à D-10 comme suit : [ta réponse]. Fichiers joints : [liste].
 > Suis le même processus que d'habitude : chemin complet de chaque fichier et action (NOUVEAU ou REMPLACE) dans
 > le guide, tests vérifiés avant de livrer.

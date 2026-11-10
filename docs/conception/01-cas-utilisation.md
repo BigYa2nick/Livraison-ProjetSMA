@@ -1,7 +1,7 @@
 # 1. Cas d'utilisation
 
-Dossier de conception, lot 1. Les identifiants `F-xx` renvoient aux exigences du cahier des charges v3
-(`Cahier_des_charges_Livraison_SMA_v3.docx`, § 4), les lots à son planning (§ 8.2).
+Dossier de conception, lot 1. Les identifiants `F-xx` renvoient aux exigences du cahier des charges v2
+(`Cahier_des_charges_Livraison_SMA_v2.docx`, § 4), les lots à son planning (§ 8.2).
 
 ## 1.1 Acteurs
 

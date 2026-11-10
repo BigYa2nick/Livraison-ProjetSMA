@@ -49,6 +49,8 @@ Le livreur a **30 secondes** pour répondre. Sans réponse, la course repart ver
 Le bandeau donne la prochaine manœuvre. **J'ai récupéré le colis** fait passer la commande à `enlevee`.
 L'incident ouvre une liste fermée : destinataire absent, adresse introuvable, panne, accident (F-24). Le
 numéro du client reste masqué : l'appel passe par la plateforme (F-14).
+Le livreur confirme le signalement ; le motif est journalisé sans donnée personnelle et la tentative passe à
+`echec_livraison`.
 
 ## M-05. Remise du colis
 

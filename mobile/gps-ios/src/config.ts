@@ -5,7 +5,7 @@ import { Accuracy } from "expo-location";
 // -- Connexion au serveur -------------------------------------------------------------
 
 /** Adresse IPv4 Wi-Fi du PC qui fait tourner uvicorn (commande `ipconfig`). Elle peut changer. */
-export const SERVEUR_PAR_DEFAUT = "http://192.168.1.50:8000";
+export const SERVEUR_PAR_DEFAUT = "http://192.168.32.1:8000";
 
 /** Numéro de test. Il doit différer de celui du répartiteur et de ceux des autres livreurs. */
 export const TELEPHONE_PAR_DEFAUT = "07 00 00 00 02";
@@ -34,6 +34,17 @@ export const TAILLE_FILE_MAX = 500;
 
 /** Réponses du serveur pour lesquelles renvoyer la même position ne servirait à rien. */
 export const STATUTS_DEFINITIFS: readonly number[] = [409, 422];
+
+// -- Propositions de course (F-21) -----------------------------------------------------
+
+/** Écart entre deux lectures de la course proposée (en millisecondes), application au premier plan. */
+export const INTERVALLE_PROPOSITION_MS = 2_000;
+
+/** Délai de confirmation par défaut du serveur (ATTRIBUTION_CONFIRMATION_S) : sert à la barre de temps. */
+export const DUREE_CONFIRMATION_S = 30;
+
+/** Vibration à l'arrivée d'une course (sur iOS, le système impose une vibration unique). */
+export const MOTIF_VIBRATION_MS = [0, 400, 200, 400];
 
 // -- Horodatage -----------------------------------------------------------------------
 

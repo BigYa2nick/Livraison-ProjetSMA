@@ -46,7 +46,7 @@ flowchart LR
 | API FastAPI (`uvicorn`) | Le serveur : comptes, dossiers livreurs, positions | tout | 8000 |
 | Console du répartiteur (Flet) | La carte avec les livreurs en direct | voir les positions | aucun |
 | App livreur Expo (`npx expo start`) | L'app iOS, testée sur iPhone | tester le GPS sur iPhone | 8081 |
-| App livreur Flet | Prototype du livreur sur PC (simulation) ou Android | tester sans iPhone | aucun |
+| App livreur Flet | Application livreur sur PC (simulation) ou Android | tester sans iPhone | aucun |
 | OSRM (Docker) | Calcul des itinéraires (F-42) : coût des offres des agents | l'attribution des courses | 5000, 5001 |
 | Serveur XMPP (Docker, `docker-compose.xmpp.yml`) | Messagerie des agents | les agents | 5222 |
 | Agents (`python -m livraison.agents`) | Annuaire, Dispatcher, un agent par livreur en ligne et par commande à attribuer (F-30 à F-34) | l'attribution des courses | aucun |
@@ -62,7 +62,7 @@ Chaque bloc indique le **dossier** où l'exécuter.
 | Python | **3.13** (pas 3.14, non validé) | `python --version` |
 | Docker Desktop | récent, **démarré** | `docker --version` |
 | Node.js | récent | `node --version` |
-| Expo Go sur l'iPhone | celui de l'App Store (SDK 57 aujourd'hui) | version affichée dans l'app |
+| Expo Go sur l'iPhone | compatible avec Expo SDK 58 | version affichée dans l'app |
 
 ### 2.2 Environnement Python
 
@@ -312,14 +312,25 @@ Terminaux 0, 1, 2, 6, 7 et 8 lancés, avec l'app livreur (terminal 4 ou 5).
 3. **La commande.** Terminal 9 : `python scripts/creer_commande_test.py --suivre`. Elle est au Plateau et le premier
    tour cherche à 3 km ; si ton livreur simulé est ailleurs, ajoute `--enlevement <latitude>,<longitude>` avec un
    point proche de lui.
-4. **La course est proposée.** Le livreur la voit avec `GET /livreurs/moi/proposition` (Swagger,
-   `http://127.0.0.1:8000/docs`, bouton **Authorize** avec le jeton du livreur) et a **30 secondes** pour répondre :
-   `POST /livreurs/moi/proposition/<commande>/confirmer` (ou `/decliner`).
+4. **La course est proposée.** Dans l'app, une carte **Nouvelle course** apparaît en haut de l'écran (le téléphone
+   vibre) avec un compte à rebours de **30 secondes** et deux boutons : **Accepter la course** et **Décliner**. L'app
+   lit la proposition toutes les 2 s, application ouverte et au premier plan. Sans l'app, la même chose se fait par
+   Swagger (`http://127.0.0.1:8000/docs`, bouton **Authorize** avec le jeton du livreur) :
+   `GET /livreurs/moi/proposition`, puis `POST /livreurs/moi/proposition/<commande>/confirmer` (ou `/decliner`).
 5. **Résultat.** Le terminal 9 affiche `état=attribuee`. S'il décline ou laisse passer les 30 s, un nouveau tour part
    sans lui ; sans livreur, le rayon s'élargit (3, 6, 12, 20 km) puis une alerte est écrite pour le répartiteur.
+6. **Valider la livraison (F-23).** Après l'enlèvement, le terminal 9 affiche la référence de la commande et son
+   `Code secret de livraison`. Saisis exactement ces six chiffres dans l'app livreur pour la commande ayant la même
+   référence. Ce code est différent du code SMS de connexion ; conserve les zéros au début s'il y en a. Un nouveau
+   lancement du script crée une nouvelle commande et un nouveau code.
+7. **Annuler les commandes de démonstration bloquées.** Si l'app livreur restaure une ancienne commande de test,
+   lance `python scripts/creer_commande_test.py --annuler-tests`. Cette commande ne touche qu'aux commandes de
+   démonstration inachevées créées par ce script. Avec `--suivre`, le script reste ouvert jusqu'à la fin de la course ;
+   `Ctrl+C` annule toutes ces commandes de test inachevées. Cela n'annule jamais les commandes réelles.
 
-Fonctionnement, réglages et limites : `docs/contract-net.md`. L'écran de proposition dans l'app mobile n'existe pas
-encore (lot 3) : on passe par Swagger.
+Fonctionnement, réglages et limites : `docs/contract-net.md`. L'écran de proposition est dans l'app mobile
+(`mobile/gps-ios/src/ui/CarteProposition.tsx`). Il n'a pas encore été essayé sur un iPhone : c'est justement l'objet
+de cet essai. La carte n'affiche pas encore la distance ni le gain : le serveur ne les envoie pas (voir § 8).
 
 ## 5. Tests
 
@@ -333,7 +344,7 @@ pytest tests/test_itineraires.py             # les itinéraires (un test attend 
 ```
 
 Résultat attendu : tout en « passed », éventuellement un « skipped » pour le test qui interroge le vrai OSRM.
-**464 tests** avec le serveur XMPP démarré (§ 2.10) ; sans lui, les 16 tests d'agents réels
+**487 tests** avec le serveur XMPP démarré (§ 2.10) ; sans lui, les 16 tests d'agents réels
 (`test_agents_xmpp.py`, `test_contract_net_xmpp.py`) sont **ignorés**, pas en échec.
 
 - Des tests « skipped » avec le message *Base de test non prête* : `python scripts/preparer_base_test.py`.
@@ -376,7 +387,7 @@ Il faut ensuite recréer les comptes du § 2.6.
 | `403 Droits insuffisants` dans l'app | le numéro appartient à un répartiteur ou administrateur | Utiliser un numéro livreur |
 | `getaddrinfo failed` dans une app | espace dans l'adresse du serveur | Format exact : `http://192.168.1.12:8000` |
 | L'iPhone n'atteint pas le serveur | pas le même Wi-Fi, IP changée, pare-feu | `ipconfig`, règles du § 2.4, test Safari `/docs` |
-| Expo Go : « incompatible with this version of Expo Go » | le SDK du projet n'est pas celui d'Expo Go | Aligner le projet sur la version indiquée dans le message |
+| Expo Go : « incompatible with this version of Expo Go » | Expo Go n'est pas compatible avec le SDK du projet | Utiliser Expo Go compatible avec le SDK 58 ou migrer le projet |
 | Les positions sont « refusées » (erreur 422) | horloges du PC et de l'iPhone désynchronisées | Régler l'heure en automatique des deux côtés |
 | Point rouge « PÉRIMÉE » sur la carte | plus de position depuis plus de 30 s | Rester dans l'app, écran allumé (suivi au premier plan seulement) |
 | Les agents ne communiquent pas | le serveur XMPP et `XMPP_DOMAINE` n'ont pas la même adresse | `127.0.0.1` des deux côtés (§ 2.3, § 2.10) |
@@ -402,9 +413,14 @@ Pour ne pas chercher ce qui n'est pas là :
 
 - **Les commandes elles-mêmes** (création, validation, paiement par l'API) : lots 4 et 5. En attendant,
   `scripts/creer_commande_test.py` crée une commande « validée » et lance l'attribution.
-- **Le suivi d'une course après son attribution** (enlèvement, livraison, clôture) et l'**écran de proposition** dans
-  l'app livreur : lot 3. Les routes existent (`/livreurs/moi/proposition`), on les utilise via Swagger.
-- **La priorité urgente, le détour dans le coût des offres, la reprise après panne** : lot 7. La **réattribution
+- **Le parcours livreur du lot 3** est amorcé dans les deux apps : proposition (acceptation/refus), course active,
+  itinéraire, appel, enlèvement et livraison par code. Le livreur peut signaler un incident (destinataire absent,
+  adresse introuvable, panne, accident) ; le motif est journalisé et termine la tentative en `echec_livraison`.
+  Le suivi des propositions fonctionne lorsque l'application est ouverte et le livreur en ligne ; le parcours complet
+  reste à valider sur appareils et en conditions terrain.
+- **Le détour dans le coût des offres, le regroupement** : étapes ultérieures. La priorité urgente (F-35) est faite :
+  `docs/contract-net.md`, § 10. La reprise après redémarrage (F-36) reconstruit les agents et l'état depuis la base ;
+  il reste à la valider pendant un essai réel. La **réattribution
   manuelle** par le répartiteur : lot 6 (l'alerte est déjà écrite).
 - **Les interfaces React** (espace client, console du répartiteur, administration) : prévues aux lots 4 et 6.
   La carte actuelle est la console Flet provisoire. Les écrans prévus sont dans `docs/conception/`.

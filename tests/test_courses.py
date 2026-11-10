@@ -8,17 +8,19 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import ConnectionError as RedisConnectionError
+from sqlalchemy import select
 
 from aides_commandes import FauxRedis, creer_commande, creer_livreur
 from livraison.api import routes_livreur
 from livraison.config import parametres
-from livraison.persistance.enums import EtatCommande
-from livraison.persistance.modeles import Commande, Utilisateur
+from livraison.persistance.enums import EtatCommande, MotifIncident, TypeEvenement
+from livraison.persistance.modeles import Commande, Evenement, Utilisateur
 from livraison.persistance.session import obtenir_session
 from livraison.services import attribution as attr
 from livraison.services import courses, evenements
 from livraison.services.erreurs import ErreurMetier
 from livraison.services.redis_client import obtenir_redis
+from livraison.services.securite import hacher_code
 
 pytestmark = pytest.mark.asyncio
 
@@ -197,3 +199,168 @@ async def test_routes_erreurs(api, session):
     assert inconnue.status_code == 404 and "proposée" in inconnue.json()["detail"]
     assert (await api.post("/livreurs/moi/proposition/pas-un-uuid/confirmer")).status_code == 422
     assert api.redis.publies == []
+
+
+# ==================================================================== course en cours (F-22, F-23)
+
+
+async def course_attribuee(session, livreur_id, code_otp="123456", **options):
+    """Crée une commande déjà attribuée au livreur avec son code de confirmation."""
+    cid = await course_retenue(session, livreur_id, **options)
+    cmd = await session.get(Commande, uuid.UUID(cid))
+    cmd.etat = EtatCommande.ATTRIBUEE
+    cmd.livreur_id = uuid.UUID(livreur_id)
+    cmd.attribuee_le = datetime.now(UTC)
+    cmd.code_confirmation_hash = hacher_code(cmd.destinataire_telephone, code_otp)
+    await session.flush()
+    return cid
+
+
+async def test_route_course_en_cours_vide(api, session):
+    await api.se_connecter(await creer_livreur(session))
+    reponse = await api.get("/livreurs/moi/course-en-cours")
+    assert reponse.status_code == 200 and reponse.json() is None
+
+
+async def test_cycle_complet_course_enlever_et_livrer(api, session):
+    livreur = await creer_livreur(session)
+    cid = await course_attribuee(session, livreur, code_otp="654321")
+    await api.se_connecter(livreur)
+
+    # 1. Course active visible
+    rep_active = await api.get("/livreurs/moi/course-en-cours")
+    assert rep_active.status_code == 200
+    details = rep_active.json()
+    assert details["commande_id"] == cid
+    assert details["etat"] == "attribuee"
+    assert details["destinataire_nom"] == "Destinataire"
+    assert "enlevement" in details and "livraison" in details
+
+    # 2. Validation de livraison refusée avant enlèvement
+    rep_livrer_trop_tot = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/livrer",
+        json={"code_confirmation": "654321"},
+    )
+    assert rep_livrer_trop_tot.status_code == 409
+
+    # 3. Enlèvement du colis
+    rep_enleve = await api.post(f"/livreurs/moi/course-en-cours/{cid}/enlever")
+    assert rep_enleve.status_code == 200
+    assert rep_enleve.json()["nouvel_etat"] == "enlevee"
+    assert any(m["type"] == evenements.COMMANDE_ENLEVEE for m in api.redis.publies)
+
+    # 4. Échec livraison avec code incorrect
+    rep_faux_code = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/livrer",
+        json={"code_confirmation": "000000"},
+    )
+    assert rep_faux_code.status_code == 400
+    assert "erroné" in rep_faux_code.json()["detail"]
+
+    # 5. Réussite livraison avec bon code OTP
+    rep_livre = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/livrer",
+        json={"code_confirmation": "654321"},
+    )
+    assert rep_livre.status_code == 200
+    assert rep_livre.json()["nouvel_etat"] == "livree"
+    assert any(m["type"] == evenements.COMMANDE_LIVREE for m in api.redis.publies)
+
+    # 6. Plus de course active
+    rep_apres = await api.get("/livreurs/moi/course-en-cours")
+    assert rep_apres.status_code == 200 and rep_apres.json() is None
+
+
+async def test_livraison_refuse_si_aucun_code_n_est_associe(api, session):
+    livreur = await creer_livreur(session)
+    cid = await course_attribuee(session, livreur)
+    commande = await session.get(Commande, uuid.UUID(cid))
+    commande.code_confirmation_hash = None
+    await api.se_connecter(livreur)
+    await api.post(f"/livreurs/moi/course-en-cours/{cid}/enlever")
+
+    reponse = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/livrer",
+        json={"code_confirmation": "123456"},
+    )
+
+    assert reponse.status_code == 409
+    assert "Aucun code de livraison" in reponse.json()["detail"]
+
+
+@pytest.mark.parametrize("code", ["12345", "1234567", "12a456"])
+async def test_route_livrer_refuse_code_qui_n_a_pas_six_chiffres(api, session, code):
+    livreur = await creer_livreur(session)
+    cid = await course_attribuee(session, livreur)
+    await api.se_connecter(livreur)
+
+    reponse = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/livrer",
+        json={"code_confirmation": code},
+    )
+
+    assert reponse.status_code == 422
+
+
+@pytest.mark.parametrize("motif", list(MotifIncident))
+async def test_signaler_incident_termine_la_course_et_journalise_le_motif(api, session, motif):
+    livreur = await creer_livreur(session)
+    cid = await course_attribuee(session, livreur)
+    await api.se_connecter(livreur)
+
+    reponse = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/incident",
+        json={"motif": motif.value},
+    )
+
+    assert reponse.status_code == 200
+    assert reponse.json()["motif"] == motif.value
+    assert reponse.json()["nouvel_etat"] == EtatCommande.ECHEC_LIVRAISON.value
+    commande = await session.get(Commande, uuid.UUID(cid))
+    assert commande.etat == EtatCommande.ECHEC_LIVRAISON
+    assert commande.terminee_le is not None
+    incident = await session.scalar(
+        select(Evenement).where(
+            Evenement.commande_id == uuid.UUID(cid),
+            Evenement.type == TypeEvenement.INCIDENT,
+        )
+    )
+    assert incident.auteur == f"livreur:{livreur}"
+    assert incident.detail == {
+        "motif": motif.value,
+        "etat_avant": EtatCommande.ATTRIBUEE.value,
+        "etat_apres": EtatCommande.ECHEC_LIVRAISON.value,
+    }
+    active = await api.get("/livreurs/moi/course-en-cours")
+    assert active.status_code == 200 and active.json() is None
+
+
+async def test_signaler_incident_refuse_un_motif_inconnu(api, session):
+    livreur = await creer_livreur(session)
+    cid = await course_attribuee(session, livreur)
+    await api.se_connecter(livreur)
+
+    reponse = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/incident",
+        json={"motif": "autre"},
+    )
+
+    assert reponse.status_code == 422
+    commande = await session.get(Commande, uuid.UUID(cid))
+    assert commande.etat == EtatCommande.ATTRIBUEE
+
+
+async def test_signaler_incident_refuse_une_commande_d_un_autre_livreur(api, session):
+    livreur = await creer_livreur(session)
+    autre_livreur = await creer_livreur(session)
+    cid = await course_attribuee(session, autre_livreur)
+    await api.se_connecter(livreur)
+
+    reponse = await api.post(
+        f"/livreurs/moi/course-en-cours/{cid}/incident",
+        json={"motif": MotifIncident.PANNE.value},
+    )
+
+    assert reponse.status_code == 404
+    commande = await session.get(Commande, uuid.UUID(cid))
+    assert commande.etat == EtatCommande.ATTRIBUEE

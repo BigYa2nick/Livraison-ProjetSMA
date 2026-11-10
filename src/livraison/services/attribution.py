@@ -15,13 +15,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from geoalchemy2 import Geometry
-from sqlalchemy import cast, func, select, update
+from sqlalchemy import case, cast, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from livraison.config import parametres
 from livraison.modele import attribution as regles
-from livraison.persistance.enums import EtatCommande, ResultatOffre, TypeEvenement
+from livraison.persistance.enums import EtatCommande, Priorite, ResultatOffre, TypeEvenement
 from livraison.persistance.modeles import Commande, Evenement, Livreur, Offre
 from livraison.services import dossier
 
@@ -130,14 +130,18 @@ async def lire_commande(session: AsyncSession, commande_id: str) -> CommandeAAtt
 
 
 async def lire_commandes_a_attribuer(session: AsyncSession) -> list[str]:
-    """Commandes qui attendent un livreur et dont les tours ne sont pas épuisés (réconciliation)."""
+    """Commandes qui attendent un livreur et dont les tours ne sont pas épuisés (réconciliation).
+
+    Dans l'ordre de traitement (F-35) : les commandes urgentes d'abord, puis les plus anciennes. Le tri
+    suit `regles.rang_priorite` (0 pour une urgente, 1 pour toute autre).
+    """
     lignes = await session.execute(
         select(Commande.id)
         .where(
             Commande.etat.in_(ETATS_A_ATTRIBUER),
             Commande.tentatives_attribution < parametres.attribution_tours_max,
         )
-        .order_by(Commande.cree_le)
+        .order_by(case((Commande.priorite == Priorite.URGENTE, 0), else_=1), Commande.cree_le)
     )
     return [str(i) for (i,) in lignes.all()]
 

@@ -1,4 +1,4 @@
-# Contract Net : attribution d'une commande à un livreur (lot 2, F-31 à F-34)
+# Contract Net : attribution d'une commande à un livreur (lot 2, F-31 à F-36)
 
 Une commande validée est attribuée au livreur dont l'**offre est la moins chère**, le coût étant calculé sur
 l'**itinéraire réel** (OSRM). Le livreur retenu a **30 secondes** pour confirmer ; s'il décline ou ne répond
@@ -69,8 +69,8 @@ python scripts/preparer_base_test.py
 pytest
 ```
 
-Résultat attendu : **464 tests** (266 avant + 187 du Contract Net + 11 du script de mot de passe), **aucun ignoré**
-tant que le serveur XMPP tourne. Sans lui, les 16 tests d'agents réels (`test_agents_xmpp.py` et
+Résultat attendu : tous les tests passent, **aucun ignoré** tant que le serveur XMPP tourne. Sans lui, les 16 tests
+d'agents réels (`test_agents_xmpp.py` et
 `test_contract_net_xmpp.py`) sont ignorés. Pour tout lancer **sauf** ces 16 tests :
 
 ```powershell
@@ -146,6 +146,7 @@ Tous les messages de la conversation sont journalisés dans `evenement` (type `m
 - **Deux précisions par rapport aux diagrammes** : un livreur qui devient saturé entre l'offre et
   l'acceptation répond `CANCEL` (motif `sature`) et non `REFUSE` ; et c'est le Dispatcher, non l'agent
   Commande, qui écrit l'état `attribuee` (il a déjà la transaction, D-06).
+- **Les commandes urgentes passent avant les autres** (F-35, § 10), puis premier arrivé, premier servi.
 - **L'agent Commande s'arrête à l'attribution.** Les lots suivants (enlèvement, livraison) le prolongeront.
 - **Après tous les tours sans succès**, la commande reste en `recherche_livreur`, une alerte est écrite dans
   `evenement` (type `notification`) et annoncée (`attribution_echouee`) : réattribution manuelle au lot 6 (F-62).
@@ -184,10 +185,11 @@ Ce sont des valeurs de départ : à calibrer avec les premiers essais réels à 
 ## 7. Limites connues
 
 - **Pas de détour avant le lot 7** (D-09) : le coût est « durée jusqu'à l'enlèvement + pénalité de charge ».
-- **La charge d'un agent recréé repart de 0** (D-08) ; la base empêche tout dépassement, mais le coût de
-  l'offre ne reflète pas les courses déjà portées tant que l'agent n'a pas rejoué ses attributions (lot 7, F-36).
-- **La priorité urgente (F-35) n'est que transmise** dans l'appel d'offres : elle ne change pas encore l'ordre
-  de traitement.
+- À la création ou reconstruction d'un agent Livreur, sa **charge est relue depuis la base** : courses actives et
+  propositions retenues encore valides. La base continue d'appliquer le garde-fou transactionnel.
+- **La priorité urgente (F-35) ne reprend pas une décision déjà prise** : elle ordonne seulement les
+  commandes qui attendent en même temps (§ 10). Une urgente qui arrive après qu'une commande normale a obtenu le
+  dernier livreur libre ne la lui enlève pas.
 - **Un seul programme d'agents, un seul Dispatcher** : la base verrouille tout de même la ligne du livreur
   pendant la décision, première étape vers plusieurs Dispatchers.
 - **Les commandes n'ont pas encore d'API** (lot 4) : en attendant, `scripts/creer_commande_test.py`.
@@ -213,8 +215,8 @@ trouve une commande validée en base, lance deux tours puis alerte le répartite
 - ton **`services/dossier.py` réel** : je ne l'avais pas reçu, j'ai utilisé sa signature vue dans tes tests
   (`peut_recevoir_des_courses(livreur)`, vrai pour un dossier validé) ; tes tests de dossier passent chez toi, ce qui
   suggère que c'est cohérent ;
-- les trois routes de proposition de course avec **l'application mobile** (l'écran n'existe pas, lot 3) : testées sur une
-  application réduite à leur routeur, avec l'identité imposée par le test ;
+- les routes de proposition et de course active sont testées au niveau API ; les apps Expo et Flet ont maintenant
+  les parcours d'acceptation/refus, navigation, appel, enlèvement et code de livraison ;
 - un **essai complet à la main** (livreur réel en ligne, commande de test, confirmation par Swagger) : à faire avec
   le § 2, étape 3.
 
@@ -225,3 +227,54 @@ des agents. Mise en route, chronologie des problèmes rencontrés, cause, résol
 **`docs/xmpp-depannage.md`**.
 
 Rappel : `XMPP_HOST` et `XMPP_DOMAINE` valent `127.0.0.1` dans `.env`, et un seul serveur XMPP écoute sur le port 5222 à la fois.
+
+## 10. Priorité urgente (F-35)
+
+Une commande de priorité `urgente` est traitée avant les autres, à deux endroits :
+
+1. **La file d'attente** (`services/attribution.py`, `lire_commandes_a_attribuer`) : les urgentes d'abord, puis les
+   plus anciennes. C'est l'ordre dans lequel la réconciliation crée les agents Commande, donc dans lequel les tours
+   démarrent après un redémarrage.
+2. **La décision du Dispatcher** (`agents/verrou_priorite.py`) : le Dispatcher décide une commande à la fois (D-06).
+   Quand plusieurs conversations attendent de décider en même temps, l'urgente passe la première, puis les autres
+   dans l'ordre d'arrivée. C'est ce qui départage deux commandes qui visent le même livreur.
+
+La règle est `rang_priorite` dans `modele/attribution.py` : 0 pour une urgente, 1 pour toute autre valeur (une
+priorité inconnue ne bloque jamais une commande).
+
+**Limites.**
+- Le verrou ordonne les conversations qui attendent ensemble ; il ne reprend jamais un livreur à une commande qui
+  l'a déjà obtenu.
+- Une urgente ne change ni le rayon de recherche, ni le délai de collecte, ni le coût des offres.
+- Un seul Dispatcher : avec plusieurs, seule la garde en base (D-08) évite la double attribution, sans la priorité.
+
+## 11. Reprise après redémarrage (F-36)
+
+Les agents sont reconstruits à partir de la base et des positions persistées :
+
+- le gestionnaire recrée les agents Livreur des livreurs toujours en ligne, recharge leur dernière position Redis et
+  initialise leur charge avec `charge_en_base` (courses attribuées/enlevées/en livraison et propositions retenues non expirées) ;
+- le gestionnaire des commandes recrée les agents des commandes encore à attribuer, dans l'ordre de priorité ;
+- les commandes déjà attribuées restent dans leur état durable. La route `GET /livreurs/moi/course-en-cours` relit
+  l'étape active depuis la base pour que l'application du livreur la retrouve.
+
+Les tests couvrent les briques de réconciliation et la lecture d'une course active depuis la base. Il reste à
+effectuer un redémarrage contrôlé des services pendant une course réelle pour valider l'ensemble en conditions d'exécution.
+
+**Fichiers de cette livraison** (chemin depuis la racine du dépôt) :
+
+| Chemin | Action |
+|---|---|
+| `src/livraison/agents/verrou_priorite.py` | NOUVEAU |
+| `src/livraison/modele/attribution.py` | REMPLACE |
+| `src/livraison/services/attribution.py` | REMPLACE |
+| `src/livraison/agents/dispatcher.py` | REMPLACE |
+| `tests/test_verrou_priorite.py` | NOUVEAU (9 tests, sans base) |
+| `tests/test_priorite_urgente.py` | NOUVEAU (11 tests, base réelle) |
+| `tests/test_agents_dispatcher.py` | REMPLACE (1 test de plus) |
+| `docs/contract-net.md`, `LANCEMENT.md` | REMPLACE |
+
+**Vérification (8 novembre 2026).** Chez toi (Windows, Python 3.13, serveur XMPP dans Docker) : 487 tests collectés, dont le
+test du Dispatcher (l'urgente gagne alors que la normale a proposé la première), le tri sur la vraie base et les 9 tests
+du verrou. Un seul échec au premier passage, dans le test lui-même (une commande « attribuée » exige son livreur : contrainte
+`ck_commande_livreur_si_en_cours`), corrigé ; le `pytest` complet est à relancer pour confirmer 487 passed.

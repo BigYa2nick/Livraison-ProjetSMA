@@ -1,9 +1,11 @@
 """Tests de la logique de l'application mobile du livreur (sans écran, sans GPS)."""
 
+import json
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -155,6 +157,103 @@ async def test_les_erreurs_du_serveur_sont_remontees(api, sms, redis_test):
     with pytest.raises(ErreurApi) as erreur:
         await api.passer_en_ligne()  # pas de profil
     assert erreur.value.statut == 409
+
+
+async def test_client_course_proposition_et_cycle_de_livraison():
+    proposition = {
+        "commande_id": "commande-1",
+        "tour": 2,
+        "adresse_enlevement": "Plateau",
+        "adresse_livraison": "Cocody",
+        "taille_colis": "petit",
+        "poids_kg": 2.5,
+        "description_colis": None,
+        "priorite": "urgente",
+        "expire_le": "2026-11-10T12:00:30Z",
+        "secondes_restantes": 30,
+        "distance_m": 1200,
+        "gain_estime_xof": 1600,
+    }
+    course = {
+        "commande_id": "commande-1",
+        "etat": "attribuee",
+        "priorite": "urgente",
+        "adresse_enlevement": "Plateau",
+        "enlevement": {"latitude": 5.32, "longitude": -4.01},
+        "adresse_livraison": "Cocody",
+        "livraison": {"latitude": 5.36, "longitude": -3.99},
+        "destinataire_nom": "Destinataire",
+        "destinataire_telephone": "+2250700000000",
+        "consignes": None,
+        "taille_colis": "petit",
+        "poids_kg": 2.5,
+        "description_colis": None,
+        "distance_m": 1200,
+        "prix_xof": 2000,
+        "gain_estime_xof": 1600,
+        "attribuee_le": "2026-11-10T12:00:00Z",
+        "enlevee_le": None,
+    }
+    reponses = {
+        ("GET", "/livreurs/moi/proposition"): httpx.Response(200, json=proposition),
+        ("POST", "/livreurs/moi/proposition/commande-1/confirmer"): httpx.Response(
+            202, json={"commande_id": "commande-1", "reponse": "confirmee"}
+        ),
+        ("POST", "/livreurs/moi/proposition/commande-1/decliner"): httpx.Response(
+            202, json={"commande_id": "commande-1", "reponse": "declinee"}
+        ),
+        ("GET", "/livreurs/moi/course-en-cours"): httpx.Response(200, json=course),
+        ("POST", "/livreurs/moi/course-en-cours/commande-1/enlever"): httpx.Response(
+            200, json={"commande_id": "commande-1", "nouvel_etat": "enlevee", "horodatage": "2026-11-10T12:01:00Z"}
+        ),
+        ("POST", "/livreurs/moi/course-en-cours/commande-1/livrer"): httpx.Response(
+            200, json={"commande_id": "commande-1", "nouvel_etat": "livree", "horodatage": "2026-11-10T12:02:00Z"}
+        ),
+        ("POST", "/livreurs/moi/course-en-cours/commande-1/incident"): httpx.Response(
+            200,
+            json={
+                "commande_id": "commande-1",
+                "motif": "panne",
+                "nouvel_etat": "echec_livraison",
+                "horodatage": "2026-11-10T12:03:00Z",
+            },
+        ),
+    }
+    appels = []
+    corps_envoyes = []
+
+    async def repondre(request):
+        appels.append((request.method, request.url.path))
+        if request.method == "POST":
+            corps_envoyes.append(request.content)
+        return reponses[(request.method, request.url.path)]
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(repondre), base_url="http://test")
+    api = ClientApi("http://test", http=http)
+    api.acces = "jeton-test"
+    try:
+        assert await api.lire_proposition() == proposition
+        assert await api.confirmer_course("commande-1") == {
+            "commande_id": "commande-1",
+            "reponse": "confirmee",
+        }
+        assert await api.decliner_course("commande-1") == {
+            "commande_id": "commande-1",
+            "reponse": "declinee",
+        }
+        assert await api.lire_course_active() == course
+        assert (await api.enlever_colis("commande-1"))["nouvel_etat"] == "enlevee"
+        assert (
+            await api.livrer_colis("commande-1", "123456")
+        )["nouvel_etat"] == "livree"
+        assert (
+            await api.signaler_incident("commande-1", "panne")
+        )["nouvel_etat"] == "echec_livraison"
+        assert appels == list(reponses)
+        assert json.loads(corps_envoyes[-2]) == {"code_confirmation": "123456"}
+        assert json.loads(corps_envoyes[-1]) == {"motif": "panne"}
+    finally:
+        await api.fermer()
 
 
 async def test_serveur_injoignable():

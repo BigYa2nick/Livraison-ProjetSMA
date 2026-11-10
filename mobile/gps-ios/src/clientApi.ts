@@ -4,6 +4,11 @@ import { DELAI_REQUETE_MS } from "./config";
 import { ErreurApi, ErreurReseau } from "./erreurs";
 
 export type TypeVehicule = "moto" | "voiture" | "velo";
+export type MotifIncident =
+  | "destinataire_absent"
+  | "adresse_introuvable"
+  | "panne"
+  | "accident";
 
 interface Jetons {
   access_token: string;
@@ -23,6 +28,54 @@ export interface PositionAEnvoyer {
 export interface PositionAcceptee {
   recu_le: string;
   retard_s: number;
+}
+
+/** Course proposée au livreur (`GET /livreurs/moi/proposition`) : aucune donnée personnelle du destinataire. */
+export interface PropositionCourse {
+  commande_id: string;
+  tour: number;
+  adresse_enlevement: string;
+  adresse_livraison: string;
+  taille_colis: string;
+  poids_kg: number | null;
+  description_colis: string | null;
+  priorite: string;
+  distance_m?: number | null;
+  gain_estime_xof?: number | null;
+  expire_le: string;
+  secondes_restantes: number;
+}
+
+export interface PointGps {
+  latitude: number;
+  longitude: number;
+}
+
+export interface CourseActive {
+  commande_id: string;
+  etat: "attribuee" | "enlevee" | "en_livraison";
+  priorite: string;
+  adresse_enlevement: string;
+  enlevement: PointGps;
+  adresse_livraison: string;
+  livraison: PointGps;
+  destinataire_nom: string;
+  destinataire_telephone: string;
+  consignes: string | null;
+  taille_colis: string;
+  poids_kg: number | null;
+  description_colis: string | null;
+  distance_m: number | null;
+  prix_xof: number;
+  gain_estime_xof: number | null;
+  attribuee_le: string | null;
+  enlevee_le: string | null;
+}
+
+export interface ChangementEtatCourse {
+  commande_id: string;
+  nouvel_etat: string;
+  horodatage: string;
 }
 
 type Methode = "GET" | "POST" | "PUT";
@@ -154,6 +207,52 @@ export class ClientApi {
 
   async passerHorsLigne(): Promise<void> {
     await this.requete("POST", "/livreurs/moi/hors-ligne");
+  }
+
+  /** La course que le Dispatcher propose au livreur, ou null s'il n'y en a pas. */
+  async lireProposition(): Promise<PropositionCourse | null> {
+    return this.requete<PropositionCourse | null>("GET", "/livreurs/moi/proposition");
+  }
+
+  /** Le livreur prend la course (la réponse est transmise à son agent, qui l'attend 30 s). */
+  async confirmerCourse(commandeId: string): Promise<void> {
+    await this.requete("POST", `/livreurs/moi/proposition/${encodeURIComponent(commandeId)}/confirmer`);
+  }
+
+  /** Le livreur refuse la course : elle est aussitôt proposée à un autre livreur. */
+  async declinerCourse(commandeId: string): Promise<void> {
+    await this.requete("POST", `/livreurs/moi/proposition/${encodeURIComponent(commandeId)}/decliner`);
+  }
+
+  /** La course actuellement en cours pour ce livreur (attribuee, enlevee, ou null). */
+  async lireCourseActive(): Promise<CourseActive | null> {
+    return this.requete<CourseActive | null>("GET", "/livreurs/moi/course-en-cours");
+  }
+
+  /** Valide l'enlèvement du colis chez l'expéditeur (F-23). */
+  async enleverColis(commandeId: string): Promise<ChangementEtatCourse> {
+    return this.requete<ChangementEtatCourse>(
+      "POST",
+      `/livreurs/moi/course-en-cours/${encodeURIComponent(commandeId)}/enlever`,
+    );
+  }
+
+  /** Valide la remise du colis au destinataire avec son code OTP (F-23). */
+  async livrerColis(commandeId: string, codeConfirmation: string): Promise<ChangementEtatCourse> {
+    return this.requete<ChangementEtatCourse>(
+      "POST",
+      `/livreurs/moi/course-en-cours/${encodeURIComponent(commandeId)}/livrer`,
+      { code_confirmation: codeConfirmation },
+    );
+  }
+
+  /** Signale un incident F-24 et termine la tentative de livraison. */
+  async signalerIncident(commandeId: string, motif: MotifIncident): Promise<void> {
+    await this.requete(
+      "POST",
+      `/livreurs/moi/course-en-cours/${encodeURIComponent(commandeId)}/incident`,
+      { motif },
+    );
   }
 
   async envoyerPosition(p: PositionAEnvoyer): Promise<PositionAcceptee> {

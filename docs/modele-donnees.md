@@ -125,7 +125,9 @@ avant la création du compte) et `ZONE_SERVICE` (polygones des zones de service)
   décision et qui l'a prise. Une seule pièce par type et par livreur (contrainte d'unicité), et un
   refus porte toujours un motif (contrainte CHECK). Les décisions de l'administrateur vont au journal
   `evenement` (type `action_manuelle`), avec des identifiants seulement.
-- **Incidents (F-24)** : enregistrés comme événements de type `incident`, sans table à part pour le moment.
+- **Incidents (F-24)** : le livreur choisit un motif fermé (`destinataire_absent`, `adresse_introuvable`, `panne`,
+  `accident`). Le motif et la transition vers `echec_livraison` sont enregistrés dans un événement de type `incident`,
+  sans donnée personnelle ni table à part.
 
 ## Ce qui n'est pas encore modélisé
 

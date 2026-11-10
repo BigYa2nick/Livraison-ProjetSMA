@@ -236,9 +236,13 @@ async def test_chaine_complete_redis_gestionnaire_agent_annuaire(annuaire, redis
     async def aucun_livreur():
         return []
 
+    async def charge_vide(_):
+        return 0
+
     gestionnaire = GestionnaireAgents(
         fabrique=partial(creer_agent_livreur, annuaire_jid=str(annuaire.jid)),
         lire_en_ligne=aucun_livreur,
+        lire_charge=charge_vide,
         creer_redis_fn=creer_redis,
         delai_grace_s=3600,
     )

@@ -35,6 +35,7 @@ from livraison.agents.livreur import creer_agent_livreur
 from livraison.config import parametres
 from livraison.persistance.modeles import Livreur
 from livraison.persistance.session import FabriqueSession
+from livraison.services import attribution
 from livraison.services.evenements import (
     CANAL_EVENEMENTS,
     COMMANDE_VALIDEE,
@@ -71,6 +72,7 @@ class LivreurEnLigne:
 
 FabriqueAgent = Callable[..., Awaitable[AgentGere]]
 LectureEnLigne = Callable[[], Awaitable[list[LivreurEnLigne]]]
+LectureCharge = Callable[[str], Awaitable[int]]
 
 
 async def lire_livreurs_en_ligne(session: AsyncSession) -> list[LivreurEnLigne]:
@@ -90,12 +92,18 @@ async def _lire_en_ligne_par_defaut() -> list[LivreurEnLigne]:
         return await lire_livreurs_en_ligne(session)
 
 
+async def _lire_charge_par_defaut(livreur_id: str) -> int:
+    async with FabriqueSession() as session:
+        return await attribution.charge_en_base(session, livreur_id)
+
+
 class GestionnaireAgents:
     def __init__(
         self,
         *,
         fabrique: FabriqueAgent = creer_agent_livreur,
         lire_en_ligne: LectureEnLigne = _lire_en_ligne_par_defaut,
+        lire_charge: LectureCharge = _lire_charge_par_defaut,
         creer_redis_fn: Callable[[], Redis] = creer_redis,
         horloge: Callable[[], float] = time.monotonic,
         delai_grace_s: float | None = None,
@@ -105,6 +113,7 @@ class GestionnaireAgents:
         self.commandes = commandes  # agents Commande ; None : le gestionnaire ne s'en occupe pas
         self._fabrique = fabrique
         self._lire_en_ligne = lire_en_ligne
+        self._lire_charge = lire_charge
         self._creer_redis = creer_redis_fn
         self._horloge = horloge
         self._grace = parametres.agents_reconciliation_s if delai_grace_s is None else delai_grace_s
@@ -137,10 +146,12 @@ class GestionnaireAgents:
             return False
         position, mesure_le = await self._position_initiale(livreur.livreur_id)
         try:
+            charge = await self._lire_charge(livreur.livreur_id)
             agent = await self._fabrique(
                 livreur.livreur_id,
                 livreur.type_vehicule,
                 livreur.capacite_kg,
+                charge=charge,
                 position=position,
                 mesure_le=mesure_le,
             )

@@ -183,6 +183,10 @@ sequenceDiagram
     API->>AC: événement livree
     AC->>API: facture émise, rémunération calculée, état cloturee
     API-->>C: facture disponible, invitation à noter
+    opt incident avant la remise
+        App->>API: motif F-24 (absent, adresse, panne, accident)
+        API->>API: journalise l'incident et termine la tentative en echec_livraison
+    end
 ```
 
 ## S6. Deux commandes visent le même livreur en même temps (F-32)

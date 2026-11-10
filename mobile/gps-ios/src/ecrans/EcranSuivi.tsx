@@ -5,6 +5,10 @@ import { Button, Text, View } from "react-native";
 import type { ClientApi } from "../clientApi";
 import type { Log } from "../journal";
 import { MODES, type Mode, type Statistiques, useCollecte } from "../useCollecte";
+import { useCourseActive } from "../useCourseActive";
+import { useProposition } from "../useProposition";
+import CarteCourseActive from "../ui/CarteCourseActive";
+import CarteProposition from "../ui/CarteProposition";
 import { couleurs, styles } from "../ui/theme";
 
 interface Props {
@@ -30,9 +34,37 @@ function resume(s: Statistiques): string {
 export default function EcranSuivi({ api, log }: Props) {
   const { enLigne, mode, permission, stats, autoriser, ouvrirReglages, basculerEnLigne, choisirMode } =
     useCollecte(api, log);
+  const course = useProposition(api, log, enLigne);
+  const active = useCourseActive(api, log, enLigne);
 
   return (
     <View style={styles.bloc}>
+      {course.proposition !== null ? (
+        <CarteProposition
+          proposition={course.proposition}
+          restantS={course.restantS}
+          envoi={course.envoi}
+          expiree={course.expiree}
+          onConfirmer={async () => {
+            await course.confirmer();
+            setTimeout(active.rafraichir, 1000);
+          }}
+          onDecliner={course.decliner}
+        />
+      ) : active.course !== null ? (
+        <CarteCourseActive
+          course={active.course}
+          actionEnCours={active.actionEnCours}
+          erreurAction={active.erreurAction}
+          onEnlever={active.validerEnlevement}
+          onLivrer={active.validerLivraison}
+          onIncident={active.signalerIncident}
+        />
+      ) : null}
+      {course.info !== null && (
+        <Text style={[styles.texte, { color: couleurs.ok, fontWeight: "700", marginBottom: 10 }]}>{course.info}</Text>
+      )}
+
       <Text style={styles.titre}>Suivi GPS</Text>
 
       <Text style={styles.etiquette}>Mode de collecte</Text>

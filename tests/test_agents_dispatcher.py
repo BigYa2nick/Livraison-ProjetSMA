@@ -23,7 +23,7 @@ from aides_commandes import (
 from livraison.agents import protocole as p
 from livraison.agents.dispatcher import AgentDispatcher
 from livraison.config import parametres
-from livraison.persistance.enums import EtatCommande, ResultatOffre, TypeEvenement
+from livraison.persistance.enums import EtatCommande, Priorite, ResultatOffre, TypeEvenement
 from livraison.persistance.modeles import Commande, Evenement, Offre
 from livraison.services import attribution as svc
 from livraison.services import evenements
@@ -490,6 +490,38 @@ async def test_deux_commandes_visent_le_meme_livreur_en_meme_temps(banc, monkeyp
     await banc.fin()
     assert (await banc.commande(gagnante)).etat == EtatCommande.ATTRIBUEE
     assert (await banc.commande(perdante)).etat == EtatCommande.RECHERCHE_LIVREUR
+    assert await svc.charge_en_base(banc.session, livreur) == 1
+
+
+async def test_l_urgente_passe_avant_la_normale_pour_le_meme_livreur(banc, monkeypatch):
+    """F-35 : les deux commandes attendent de décider en même temps, la normale ayant proposé la première."""
+    monkeypatch.setattr(parametres, "livreur_charge_max", 1)
+    livreur = await creer_livreur(banc.session)
+    normale = await commande_en_recherche(banc.session)
+    urgente = await commande_en_recherche(banc.session, priorite=Priorite.URGENTE)
+    for cid in (normale, urgente):
+        banc.demander(cid)
+    await banc.sortants(2)  # deux QUERY-REF
+    for cid in (normale, urgente):
+        banc.annuaire_repond(cid, 1, [livreur])
+    await banc.sortants(2)  # deux CFP
+
+    verrou = banc.dispatcher._verrou_decision
+    async with verrou(0):  # on tient la décision : les deux conversations s'y retrouvent ensemble
+        for cid in (normale, urgente):  # la normale propose la première : sans priorité, elle gagnerait
+            banc.propose(livreur, cid, 100.0)
+        async with asyncio.timeout(2.0):
+            while verrou.en_attente < 2:
+                await asyncio.sleep(0.01)
+
+    sortants = await banc.sortants(3)  # ACCEPT pour l'urgente ; REJECT + FAILURE pour la normale
+    accept = next(m for m in sortants if m.get_metadata("performative") == p.ACCEPT_PROPOSAL)
+    assert p.Decision.depuis_contenu(json.loads(accept.body)).commande_id == urgente
+    banc.confirme(livreur, urgente)
+    await banc.attendre(p.INFORM, p.jid_commande(urgente))
+    await banc.fin()
+    assert (await banc.commande(urgente)).etat == EtatCommande.ATTRIBUEE
+    assert (await banc.commande(normale)).etat == EtatCommande.RECHERCHE_LIVREUR
     assert await svc.charge_en_base(banc.session, livreur) == 1
 
 

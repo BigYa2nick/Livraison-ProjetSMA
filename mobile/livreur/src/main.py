@@ -16,9 +16,10 @@ from datetime import UTC, datetime
 import flet as ft
 import flet_geolocator as ftg
 
-from client_api import ClientApi, ErreurApi, ErreurReseau
+from client_api import ClientApi, ErreurApi, ErreurReseau, MotifIncident
 from emetteur import Emetteur, SuiviCadence
 from simulateur import Simulateur
+
 
 def _instant_mesure(p) -> datetime:
     """Heure de la mesure GPS.
@@ -56,6 +57,16 @@ class Etat:
         self.service_gps: ftg.Geolocator | None = None
         self.tache: asyncio.Task | None = None
         self.debut: datetime | None = None
+        self.tache_courses: asyncio.Task | None = None
+        self.proposition: dict | None = None
+        self.course_active: dict | None = None
+        self.cle_proposition: str | None = None
+        self.expire_proposition: float | None = None
+        self.derniere_lecture_course = 0.0
+        self.action_course = False
+        self.erreur_course: str | None = None
+        self.code_confirmation = ""
+        self.motif_incident: MotifIncident = "destinataire_absent"
 
 
 async def main(page: ft.Page):
@@ -68,6 +79,8 @@ async def main(page: ft.Page):
     # Service « outils » : permissions, réglages, position ponctuelle. Il ne diffuse rien tout seul.
     outils = ftg.Geolocator()
     page.services.append(outils)
+    url_launcher = ft.UrlLauncher()
+    page.services.append(url_launcher)
 
     journal = ft.ListView(controls=[], height=260, spacing=2, auto_scroll=True)
     statistiques = ft.Text("", size=13, selectable=True)
@@ -115,6 +128,373 @@ async def main(page: ft.Page):
             }
         )
         afficher_statistiques()
+
+    # ------------------------------------------------------- propositions et course active
+
+    def afficher_course():
+        section_course.controls.clear()
+        if not etat.en_ligne:
+            section_course.visible = False
+            page.update()
+            return
+
+        p = etat.proposition
+        c = etat.course_active
+        if p is not None:
+            urgente = p.get("priorite") == "urgente"
+            restant = max(
+                0,
+                int((etat.expire_proposition or asyncio.get_running_loop().time())
+                    - asyncio.get_running_loop().time() + 0.999),
+            )
+            couleur = ft.Colors.RED_700 if restant <= 10 else ft.Colors.BLUE_700
+            taille = p.get("taille_colis", "Colis")
+            poids = p.get("poids_kg")
+            colis = taille if poids is None else f"{taille} · {str(poids).replace('.', ',')} kg"
+            contenu = [
+                ft.Row(
+                    [
+                        ft.Text("Nouvelle course", size=20, weight=ft.FontWeight.BOLD),
+                        ft.Text("URGENT", color=ft.Colors.WHITE, bgcolor=ft.Colors.RED_700,
+                                weight=ft.FontWeight.BOLD, visible=urgente),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                ft.Text(
+                    "Délai dépassé" if restant == 0 else f"{restant} s pour répondre",
+                    size=32,
+                    weight=ft.FontWeight.BOLD,
+                    color=couleur,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+                ft.Text(f"Enlèvement : {p['adresse_enlevement']}", size=16),
+                ft.Text(f"Livraison : {p['adresse_livraison']}", size=16),
+                ft.Text(colis, weight=ft.FontWeight.BOLD),
+            ]
+            if p.get("description_colis"):
+                contenu.append(ft.Text(p["description_colis"]))
+            if p.get("distance_m"):
+                contenu.append(ft.Text(f"Distance estimée : {p['distance_m'] / 1000:.1f} km"))
+            if p.get("gain_estime_xof"):
+                contenu.append(
+                    ft.Text(f"Gain estimé : {p['gain_estime_xof']:,} F CFA".replace(",", " "))
+                )
+            contenu.append(
+                ft.Row(
+                    [
+                        ft.Button(
+                            "Accepter la course",
+                            icon=ft.Icons.CHECK,
+                            on_click=lambda e: repondre_proposition(True),
+                            disabled=etat.action_course or restant == 0,
+                            bgcolor=ft.Colors.GREEN_700,
+                            color=ft.Colors.WHITE,
+                        ),
+                        ft.Button(
+                            "Décliner",
+                            icon=ft.Icons.CLOSE,
+                            on_click=lambda e: repondre_proposition(False),
+                            disabled=etat.action_course or restant == 0,
+                        ),
+                    ],
+                    wrap=True,
+                )
+            )
+            section_course.controls.append(
+                ft.Container(
+                    content=ft.Column(contenu, spacing=8),
+                    padding=14,
+                    border=ft.Border.all(2, ft.Colors.RED_700 if urgente else ft.Colors.BLUE_700),
+                    border_radius=12,
+                )
+            )
+        elif c is not None:
+            enlevee = c["etat"] in ("enlevee", "en_livraison")
+            coordonnees = c["livraison"] if enlevee else c["enlevement"]
+            adresse = c["adresse_livraison"] if enlevee else c["adresse_enlevement"]
+            contenu = [
+                ft.Row(
+                    [
+                        ft.Text(
+                            "ÉTAPE 2/2 : LIVRAISON" if enlevee else "ÉTAPE 1/2 : ENLÈVEMENT",
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.GREEN_700 if enlevee else ft.Colors.BLUE_700,
+                        ),
+                        ft.Text(
+                            "URGENT",
+                            color=ft.Colors.RED_700,
+                            visible=c.get("priorite") == "urgente",
+                            weight=ft.FontWeight.BOLD,
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                ft.Text(f"Commande : {c['commande_id']}", size=11, color=ft.Colors.GREY_700),
+                ft.Text("Destination", size=12, color=ft.Colors.GREY_700),
+                ft.Text(adresse, size=18, weight=ft.FontWeight.BOLD),
+                ft.Button(
+                    "Ouvrir l'itinéraire",
+                    icon=ft.Icons.MAP,
+                    on_click=lambda e: ouvrir_itineraire(coordonnees),
+                ),
+                ft.Text(f"Destinataire : {c['destinataire_nom']}"),
+                ft.Text(f"Téléphone : {c['destinataire_telephone']}"),
+                ft.Button(
+                    "Appeler le destinataire",
+                    icon=ft.Icons.PHONE,
+                    on_click=lambda e: appeler_destinataire(c["destinataire_telephone"]),
+                ),
+            ]
+            if c.get("consignes"):
+                contenu.append(ft.Text(f"Consignes : {c['consignes']}"))
+            if c.get("gain_estime_xof"):
+                contenu.append(
+                    ft.Text(f"Gain estimé : {c['gain_estime_xof']:,} F CFA".replace(",", " "))
+                )
+            if etat.erreur_course:
+                contenu.append(ft.Text(etat.erreur_course, color=ft.Colors.RED_700))
+            if enlevee:
+                contenu.extend(
+                    [
+                        ft.TextField(
+                            label="Code secret à 6 chiffres reçu par le client",
+                            keyboard_type=ft.KeyboardType.NUMBER,
+                            max_length=6,
+                            value=etat.code_confirmation,
+                            on_change=lambda e: setattr(
+                                etat, "code_confirmation", e.control.value or ""
+                            ),
+                        ),
+                        ft.Button(
+                            "Valider la livraison",
+                            icon=ft.Icons.DONE_ALL,
+                            on_click=valider_livraison,
+                            disabled=etat.action_course or len(etat.code_confirmation.strip()) != 6,
+                            bgcolor=ft.Colors.GREEN_700,
+                            color=ft.Colors.WHITE,
+                        ),
+                    ]
+                )
+            else:
+                contenu.append(
+                    ft.Button(
+                        "J'ai récupéré le colis",
+                        icon=ft.Icons.INVENTORY_2,
+                        on_click=valider_enlevement,
+                        disabled=etat.action_course,
+                    )
+                )
+            contenu.extend(
+                [
+                    ft.Dropdown(
+                        label="Motif de l'incident",
+                        value=etat.motif_incident,
+                        options=[
+                            ft.DropdownOption(key="destinataire_absent", text="Destinataire absent"),
+                            ft.DropdownOption(key="adresse_introuvable", text="Adresse introuvable"),
+                            ft.DropdownOption(key="panne", text="Panne"),
+                            ft.DropdownOption(key="accident", text="Accident"),
+                        ],
+                        on_select=lambda e: setattr(etat, "motif_incident", e.control.value),
+                        disabled=etat.action_course,
+                    ),
+                    ft.Button(
+                        "Signaler un incident",
+                        icon=ft.Icons.WARNING_AMBER,
+                        on_click=ouvrir_confirmation_incident,
+                        disabled=etat.action_course,
+                        color=ft.Colors.RED_700,
+                    ),
+                ]
+            )
+            section_course.controls.append(
+                ft.Container(
+                    content=ft.Column(contenu, spacing=8),
+                    padding=14,
+                    border=ft.Border.all(2, ft.Colors.BLUE_700),
+                    border_radius=12,
+                )
+            )
+        section_course.visible = p is not None or c is not None
+        page.update()
+
+    async def ouvrir_itineraire(point: dict):
+        url = (
+            "https://www.google.com/maps/dir/?api=1"
+            f"&destination={point['latitude']},{point['longitude']}"
+            "&travelmode=driving"
+        )
+        try:
+            await url_launcher.launch_url(url)
+        except ft.FletException as ex:
+            log(f"Impossible d'ouvrir l'itinéraire : {type(ex).__name__} {ex}", ft.Colors.RED_600)
+
+    async def appeler_destinataire(telephone: str):
+        try:
+            await url_launcher.launch_url(
+                f"tel:{''.join(c for c in telephone if c.isdigit() or c == '+')}"
+            )
+        except ft.FletException as ex:
+            log(f"Impossible d'ouvrir l'appel : {type(ex).__name__} {ex}", ft.Colors.RED_600)
+
+    async def repondre_proposition(accepte: bool):
+        p = etat.proposition
+        if p is None or etat.action_course:
+            return
+        etat.action_course = True
+        afficher_course()
+        try:
+            if accepte:
+                await etat.api.confirmer_course(p["commande_id"])
+                log("Course confirmée, en attente de l'attribution.", ft.Colors.GREEN_700)
+            else:
+                await etat.api.decliner_course(p["commande_id"])
+                log("Course déclinée : elle sera proposée à un autre livreur.")
+            etat.proposition = None
+            etat.cle_proposition = None
+            etat.expire_proposition = None
+            etat.derniere_lecture_course = 0.0
+        except (ErreurApi, ErreurReseau) as ex:
+            log(f"Réponse à la proposition non transmise : {ex}", ft.Colors.RED_600)
+        finally:
+            etat.action_course = False
+            afficher_course()
+
+    async def rafraichir_course_active():
+        try:
+            etat.course_active = await etat.api.lire_course_active()
+            etat.derniere_lecture_course = asyncio.get_running_loop().time()
+            etat.erreur_course = None
+        except (ErreurApi, ErreurReseau) as ex:
+            etat.erreur_course = f"Lecture de la course en échec : {ex}"
+            log(etat.erreur_course, ft.Colors.RED_600)
+        afficher_course()
+
+    async def valider_enlevement(e):
+        c = etat.course_active
+        if c is None or etat.action_course:
+            return
+        etat.action_course = True
+        afficher_course()
+        try:
+            await etat.api.enlever_colis(c["commande_id"])
+            etat.code_confirmation = ""
+            log("Colis enlevé avec succès. En route vers la livraison.", ft.Colors.GREEN_700)
+            await rafraichir_course_active()
+        except (ErreurApi, ErreurReseau) as ex:
+            etat.erreur_course = f"Échec validation enlèvement : {ex}"
+            log(etat.erreur_course, ft.Colors.RED_600)
+        finally:
+            etat.action_course = False
+            afficher_course()
+
+    async def valider_livraison(e):
+        c = etat.course_active
+        code = etat.code_confirmation.strip()
+        if c is None or etat.action_course:
+            return
+        if len(code) != 6 or not code.isdigit():
+            etat.erreur_course = "Saisis le code secret à 6 chiffres donné par le destinataire."
+            afficher_course()
+            return
+        etat.action_course = True
+        afficher_course()
+        try:
+            await etat.api.livrer_colis(c["commande_id"], code)
+            etat.course_active = None
+            etat.code_confirmation = ""
+            etat.erreur_course = None
+            etat.derniere_lecture_course = 0.0
+            log("Course livrée et clôturée avec succès.", ft.Colors.GREEN_700)
+        except (ErreurApi, ErreurReseau) as ex:
+            etat.erreur_course = f"Échec validation livraison : {ex}"
+            log(etat.erreur_course, ft.Colors.RED_600)
+        finally:
+            etat.action_course = False
+            afficher_course()
+
+    async def signaler_incident(e):
+        c = etat.course_active
+        if c is None or etat.action_course:
+            return
+        etat.action_course = True
+        afficher_course()
+        try:
+            resultat = await etat.api.signaler_incident(c["commande_id"], etat.motif_incident)
+            etat.course_active = None
+            etat.erreur_course = None
+            etat.derniere_lecture_course = 0.0
+            log(
+                f"Incident « {etat.motif_incident} » signalé. "
+                f"Tentative terminée ({resultat['nouvel_etat']}).",
+                ft.Colors.RED_700,
+            )
+        except (ErreurApi, ErreurReseau) as ex:
+            etat.erreur_course = f"Échec du signalement d'incident : {ex}"
+            log(etat.erreur_course, ft.Colors.RED_600)
+        finally:
+            etat.action_course = False
+            afficher_course()
+
+    async def confirmer_incident(e):
+        page.pop_dialog()
+        await signaler_incident(e)
+
+    def ouvrir_confirmation_incident(e):
+        page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title="Confirmer l'incident",
+                content=ft.Text("Le signalement termine cette tentative de livraison."),
+                actions=[
+                    ft.TextButton("Annuler", on_click=lambda _: page.pop_dialog()),
+                    ft.TextButton("Confirmer", on_click=confirmer_incident),
+                ],
+            )
+        )
+
+    async def boucle_courses():
+        loop = asyncio.get_running_loop()
+        erreur_en_cours = False
+        while etat.en_ligne:
+            try:
+                p = await etat.api.lire_proposition()
+                maintenant = loop.time()
+                if p is None:
+                    if etat.proposition is not None:
+                        etat.proposition = None
+                        etat.cle_proposition = None
+                        etat.expire_proposition = None
+                        log("La proposition n'est plus disponible.")
+                else:
+                    cle = f"{p['commande_id']}:{p['tour']}"
+                    if cle != etat.cle_proposition:
+                        etat.cle_proposition = cle
+                        etat.expire_proposition = maintenant + p["secondes_restantes"]
+                        log(
+                            f"Nouvelle course proposée : {p['secondes_restantes']} s pour répondre.",
+                            ft.Colors.GREEN_700,
+                        )
+                    etat.proposition = p
+
+                if (
+                    etat.proposition is None
+                    and maintenant - etat.derniere_lecture_course >= 5
+                ):
+                    etat.course_active = await etat.api.lire_course_active()
+                    etat.derniere_lecture_course = loop.time()
+                if erreur_en_cours:
+                    log("La lecture des courses est de nouveau opérationnelle.", ft.Colors.GREEN_700)
+                erreur_en_cours = False
+            except (ErreurApi, ErreurReseau) as ex:
+                if not erreur_en_cours:
+                    log(f"Lecture des courses en échec : {ex}", ft.Colors.RED_600)
+                erreur_en_cours = True
+                afficher_course()
+                await asyncio.sleep(2)
+                continue
+            afficher_course()
+            await asyncio.sleep(1)
 
     # --------------------------------------------------------------- sources de position
 
@@ -209,11 +589,25 @@ async def main(page: ft.Page):
             etat.debut = datetime.now(UTC)
             bouton_ligne.content = "Passer hors ligne"
             log(f"En ligne, mode : {MODES[etat.mode]}", ft.Colors.GREEN_700)
+            etat.tache_courses = asyncio.create_task(boucle_courses())
             await demarrer_gps()
         else:
             etat.en_ligne = False
+            if etat.tache_courses is not None:
+                etat.tache_courses.cancel()
+                try:
+                    await etat.tache_courses
+                except asyncio.CancelledError:
+                    pass
+                etat.tache_courses = None
+            etat.proposition = None
+            etat.course_active = None
+            etat.cle_proposition = None
+            etat.expire_proposition = None
+            etat.erreur_course = None
             await arreter_gps()
             bouton_ligne.content = "Passer en ligne"
+            afficher_course()
             try:
                 await etat.api.passer_hors_ligne()
             except (ErreurApi, ErreurReseau) as ex:
@@ -299,6 +693,7 @@ async def main(page: ft.Page):
     )
 
     bouton_ligne = ft.Button("Passer en ligne", icon=ft.Icons.GPS_FIXED, on_click=basculer_en_ligne)
+    section_course = ft.Column(spacing=10, visible=False)
     section_gps = ft.Column(
         [
             ft.Text("Suivi GPS", size=18, weight=ft.FontWeight.BOLD),
@@ -327,6 +722,7 @@ async def main(page: ft.Page):
             content=ft.Column(
                 [
                     section_connexion,
+                    section_course,
                     section_gps,
                     ft.Divider(),
                     ft.Text("Journal", weight=ft.FontWeight.BOLD),

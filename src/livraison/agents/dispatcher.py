@@ -14,7 +14,9 @@ conversation d'attribution (`<commande_id>:<tour>`, docs/conception/03-sequences
    `attribuee` ; déclinée ou expirée, l'offre est marquée `declinee` et l'agent Commande lance un
    nouveau tour sans ce livreur.
 
-Plusieurs conversations tournent en parallèle (une tâche chacune). Tous les messages d'une conversation
+Plusieurs conversations tournent en parallèle (une tâche chacune). Quand plusieurs d'entre elles attendent
+le moment de décider, les commandes urgentes sont servies avant les autres (F-35), puis dans l'ordre
+d'arrivée (`verrou_priorite.py`). Tous les messages d'une conversation
 sont journalisés dans la table `evenement` (F-63). Voir docs/contract-net.md.
 """
 
@@ -74,6 +76,7 @@ from livraison.agents.protocole import (
     livreur_id_depuis_jid,
     repondre,
 )
+from livraison.agents.verrou_priorite import VerrouPrioritaire
 from livraison.config import parametres
 from livraison.modele import attribution as regles
 from livraison.modele.cout import Offre
@@ -119,7 +122,8 @@ class AgentDispatcher(Agent):
         self.conversations: dict[str, Conversation] = {}
         # Les décisions « quel livreur pour cette commande » se prennent une par une (D-06) ; la base
         # verrouille aussi la ligne du livreur, c'est la garantie qui survit à un second Dispatcher.
-        self._verrou_decision = asyncio.Lock()
+        # Les commandes urgentes passent avant les autres (F-35), puis premier arrivé, premier servi.
+        self._verrou_decision = VerrouPrioritaire()
         self._taches: set[asyncio.Task] = set()
 
     # -- comportements ---------------------------------------------------------------------------
@@ -337,7 +341,7 @@ class AgentDispatcher(Agent):
             return self._echec(conv, ECHEC_SANS_OFFRE, f"{len(refus)} refus, {len(silencieux)} silences")
 
         # 5. la décision
-        gagnant = await self._decider(conv, propositions)
+        gagnant = await self._decider(conv, propositions, commande.priorite)
         if gagnant is not None:  # le gagnant d'abord, puis les autres (docs 03, S2)
             self._vers(
                 conv,
@@ -445,10 +449,16 @@ class AgentDispatcher(Agent):
         if (commande_id, tour) != (conv.commande_id, conv.tour):
             raise MessageInvalide("réponse à un autre appel d'offres")
 
-    async def _decider(self, conv: Conversation, propositions: dict[str, Proposition]) -> str | None:
-        """Retient la meilleure offre que la base accepte (D-06, F-32). Renvoie le gagnant, ou None."""
+    async def _decider(
+        self, conv: Conversation, propositions: dict[str, Proposition], priorite: str | None = None
+    ) -> str | None:
+        """Retient la meilleure offre que la base accepte (D-06, F-32). Renvoie le gagnant, ou None.
+
+        `priorite` est celle de la commande : si plusieurs commandes attendent de décider en même temps,
+        l'urgente passe la première (F-35).
+        """
         classement = regles.ordre_de_preference([Offre(i, p.cout) for i, p in propositions.items()])
-        async with self._verrou_decision:
+        async with self._verrou_decision(regles.rang_priorite(priorite)):
             async with self._bd() as session:
                 gagnant = None
                 for offre in classement:

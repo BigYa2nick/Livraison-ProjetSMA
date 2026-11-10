@@ -147,14 +147,21 @@ class FauxLivreur:
 def livreurs():
     agents = {}
 
-    async def fabrique(livreur_id, type_vehicule, capacite_kg, *, position=None, mesure_le=None):
+    async def fabrique(
+        livreur_id, type_vehicule, capacite_kg, *, charge=0, position=None, mesure_le=None
+    ):
         agents[livreur_id] = FauxLivreur()
         return agents[livreur_id]
 
     async def lecture():
         return []
 
-    gestionnaire = GestionnaireAgents(fabrique=fabrique, lire_en_ligne=lecture, delai_grace_s=0)
+    async def lire_charge(_):
+        return 0
+
+    gestionnaire = GestionnaireAgents(
+        fabrique=fabrique, lire_en_ligne=lecture, lire_charge=lire_charge, delai_grace_s=0
+    )
     return gestionnaire, agents
 
 

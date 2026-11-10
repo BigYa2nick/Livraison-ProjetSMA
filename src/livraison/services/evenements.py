@@ -23,6 +23,8 @@ LIVREUR_HORS_LIGNE = "livreur_hors_ligne"
 COMMANDE_VALIDEE = "commande_validee"  # une commande est prête à être attribuée (F-31)
 COURSE_CONFIRMEE = "course_confirmee"  # le livreur a accepté la course qu'on lui propose (F-34)
 COURSE_DECLINEE = "course_declinee"  # le livreur a refusé la course qu'on lui propose (F-34)
+COMMANDE_ENLEVEE = "commande_enlevee"  # le livreur a récupéré le colis (F-23)
+COMMANDE_LIVREE = "commande_livree"  # le livreur a remis le colis avec preuve (F-23)
 
 # Des agents vers l'API, l'application du livreur et la console du répartiteur. Le gestionnaire
 # d'agents les voit passer sur le même canal et les ignore.

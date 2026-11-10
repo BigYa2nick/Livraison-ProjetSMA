@@ -1,9 +1,9 @@
-# Livreur GPS : prototype React Native / Expo (iOS)
+# Livreur iOS : React Native / Expo SDK 58
 
-Prototype du suivi GPS du livreur pour le lot 1 du projet **Livraison SMA**. Il se branche sur le
+Application livreur iOS du projet **Livraison SMA**. Elle se branche sur le
 serveur FastAPI existant (`/auth/code`, `/auth/verifier`, `/livreurs/moi/...`) et fait apparaître
-le livreur sur la carte du répartiteur. Il remplace, côté iPhone, le prototype Flet de
-`mobile/livreur/`.
+le livreur sur la carte du répartiteur. Elle partage avec l'application Flet de `mobile/livreur/`
+les parcours de proposition et de course active ; les deux clients restent disponibles.
 
 ## Ce que fait l'application
 
@@ -14,6 +14,8 @@ le livreur sur la carte du répartiteur. Il remplace, côté iPhone, le prototyp
   - **Simulation** d'un trajet Plateau → Cocody, utile pour voir bouger le point sur la carte sans se déplacer.
 - Envoi fiable : si le Wi-Fi coupe, les positions s'accumulent (500 au maximum) puis partent dans l'ordre au retour du réseau.
 - Mesures affichées en direct : trous dans la réception du GPS, retard mesure → serveur, durée des requêtes, positions envoyées / en attente / refusées / perdues.
+- Lecture des propositions de course, compte à rebours, acceptation ou refus.
+- Affichage de la course attribuée, navigation vers l'étape courante, appel du destinataire, validation de l'enlèvement et remise par code secret.
 
 ## Arborescence
 
@@ -22,7 +24,7 @@ gps-ios/
 ├── App.tsx                  assemble les écrans et le journal
 ├── index.ts                 point d'entrée Expo
 ├── app.json                 configuration Expo (permission de localisation, réseau local)
-├── package.json             dépendances à versions fixées (Expo SDK 57)
+├── package.json             dépendances à versions fixées (Expo SDK 58)
 ├── tsconfig.json
 └── src/
     ├── config.ts            tous les paramètres : adresse du serveur, cadence, seuils
@@ -36,12 +38,12 @@ gps-ios/
     ├── journal.ts           journal affiché à l'écran
     ├── stockage.ts          mémorise l'adresse du serveur et le numéro
     ├── ecrans/              EcranConnexion.tsx, EcranSuivi.tsx
-    └── ui/                  Journal.tsx, theme.ts
+    └── ui/                  Journal.tsx, CarteProposition.tsx, CarteCourseActive.tsx
 ```
 
 ## Prérequis
 
-- Node.js récent et l'application **Expo Go** sur l'iPhone, (l'App Store n'installe que la dernière version : aujourd'hui elle gère le **SDK 57**, et le projet est figé sur ce SDK ; si Expo Go se met à jour vers un autre SDK, il faudra migrer le projet).
+- Node.js récent et l'application **Expo Go** sur l'iPhone, compatible avec **Expo SDK 58**. Expo Go et le projet doivent utiliser le même SDK.
 - L'iPhone et le PC sur le **même Wi-Fi**.
 - Le serveur lancé avec `--host 0.0.0.0` (déjà le cas dans le récap) et le port 8000 ouvert dans le pare-feu Windows.
 
@@ -81,7 +83,7 @@ Reporter les résultats dans `docs/prototype-gps.md` du dépôt.
 
 ## Choix techniques et limites connues
 
-- **Premier plan uniquement.** Dans Expo Go sur iOS, `TaskManager` ne permet pas l'exécution en arrière-plan : il faut un development build (d'après la doc Expo du SDK 58, à revérifier pour le SDK 57). Le cahier des charges v3 classe le suivi écran verrouillé en extension. L'application garde donc l'écran allumé tant qu'elle est en ligne.
+- **Premier plan uniquement.** Dans Expo Go sur iOS, le suivi GPS et la lecture des propositions ne sont actifs qu'au premier plan. Le cahier des charges v2 classe le suivi écran verrouillé en extension. L'application garde donc l'écran allumé tant qu'elle est en ligne.
 - **Cadence.** `timeInterval` n'existe que sur Android ; sur iOS, le système envoie environ une position par seconde en mouvement. L'application n'en envoie qu'une toutes les 5 s (`INTERVALLE_S`) et compte les autres comme « espacées ».
 - **Précision.** `Accuracy.High` (de l'ordre de 10 m) : suffisant en ville et plus économe que `BestForNavigation`.
 - **Horodatage.** Flet avait produit des mesures datées de 1970 sous Windows. Ici, un horodatage absurde est remplacé par l'heure du téléphone **et compté** (« horodatages GPS corrigés »), car le retard affiché devient alors trop optimiste.
@@ -91,8 +93,9 @@ Reporter les résultats dans `docs/prototype-gps.md` du dépôt.
 ## État actuel
 
 Vérifié :
-- le typage TypeScript passe (`tsc --noEmit`, mode strict) sur un projet Expo SDK 57 neuf, et les versions de `package.json` sont celles que `npx expo install` impose pour ce SDK ;
+- le typage TypeScript passe (`npm run typecheck`) avec les dépendances Expo SDK 58 du projet ;
 - la logique pure (file d'envoi, cadence, horodatage, simulateur) a été testée par des scripts : réseau coupé puis rétabli, refus 422, erreur 500, file pleine, envois concurrents, détection de trous ;
-- le client API a été testé contre un faux serveur qui reproduit le contrat lu dans les sources FastAPI : corps des requêtes, rôle `livreur`, rafraîchissement du jeton sur 401, erreurs 422, serveur arrêté.
+- le client API a été testé contre le contrat des routes FastAPI : corps des requêtes, rôle `livreur`, rafraîchissement du jeton sur 401, erreurs 422, serveur arrêté ;
+- l'écran affiche la proposition et son échéance, puis la course attribuée ; le livreur peut ouvrir l'itinéraire, appeler le destinataire, valider l'enlèvement et la remise par code.
 
 **Non vérifié** (aucun iPhone à disposition lors de l'écriture) : exécution dans Expo Go, GPS réel, fenêtre de permission, écran maintenu allumé, accès au serveur depuis le Wi-Fi (pare-feu). Ce sont les points que les scénarios ci-dessus doivent confirmer.

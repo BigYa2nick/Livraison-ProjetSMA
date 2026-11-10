@@ -424,6 +424,12 @@ async def reactiver_livreur(
     return dossier
 
 
-# Utilisé par le futur Dispatcher (lot 2) : seuls les livreurs validés reçoivent des courses.
+# Utilisé par le Dispatcher : en production seuls les livreurs validés reçoivent des courses.
+# En développement (LIVREUR_VALIDATION_REQUISE=false), un compte en attente peut aussi tester.
 def peut_recevoir_des_courses(livreur: Livreur) -> bool:
+    if not parametres.livreur_validation_requise:
+        return livreur.statut_validation not in (
+            StatutValidation.SUSPENDU,
+            StatutValidation.REJETE,
+        )
     return livreur.statut_validation == StatutValidation.VALIDE

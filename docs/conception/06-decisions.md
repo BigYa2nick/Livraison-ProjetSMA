@@ -42,7 +42,7 @@ Redis ne sert qu'au temps réel (position courante, événements). Un agent qui 
 état depuis la base : commandes non finales, offres en cours, livreurs en ligne.
 
 **Conséquences.**
-- (+) Aucune commande perdue (NF-04) ; reprise après panne simplifiée (F-36, lot 7).
+- (+) Aucune commande perdue (NF-04) ; reprise après panne simplifiée (F-36, lot 2, priorité importante).
 - (+) Les garanties d'intégrité sont dans la base : une seule offre `retenue` par commande et par tour,
   un livreur toujours présent pour une commande « attribuée », « enlevée » ou « en livraison ».
 - (−) Chaque message d'un agent qui change l'état coûte une écriture.
@@ -98,8 +98,9 @@ confirmation est encore possible. La ligne du livreur est verrouillée pendant l
 compte aussi sa charge (pour son coût et son refus « sature »), mais **la base a le dernier mot** : si elle
 écarte la meilleure offre, le Dispatcher essaie la suivante.
 
-**Conséquence.** Un agent recréé (livreur qui repasse en ligne) repart avec une charge de 0 ; le
-contrôle en base empêche tout dépassement. La reprise exacte de la charge est le sujet du lot 7 (F-36).
+**Conséquence.** À chaque création d'agent, le gestionnaire relit la charge courante depuis la base
+(commandes en cours et offres retenues encore valides). Le contrôle en base demeure la garantie finale
+contre tout dépassement.
 
 ## D-09. Le coût d'une offre n'inclut pas de détour avant le lot 7 (proposée)
 
@@ -136,4 +137,3 @@ pyjabber 0.4.5, greenlet). Le domaine XMPP vaut `127.0.0.1` (`XMPP_DOMAINE`, `XM
 **Conséquences.**
 - (+) Les 16 tests d'agents réels passent sous Windows, Docker Desktop étant déjà utilisé pour PostgreSQL, Redis et OSRM.
 - (−) Un conteneur de plus à démarrer ; la cause exacte du blocage sous Windows n'est pas établie.
-

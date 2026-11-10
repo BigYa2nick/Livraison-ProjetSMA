@@ -7,7 +7,15 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from livraison.api.dependances import exiger_roles
-from livraison.api.schemas_courses import PropositionCourseSortie, ReponseCourseSortie
+from livraison.api.schemas_courses import (
+    ChangementEtatCourseSortie,
+    CourseActiveSortie,
+    PropositionCourseSortie,
+    ReponseCourseSortie,
+    SignalementIncidentEntree,
+    SignalementIncidentSortie,
+    ValidationLivraisonEntree,
+)
 from livraison.api.schemas_gps import (
     EtatEnLigne,
     PositionAccepteeSortie,
@@ -133,3 +141,77 @@ async def decliner_la_course(
     """Le livreur refuse la course : elle est aussitôt proposée à un autre livreur."""
     await courses.repondre_a_la_proposition(session, redis, utilisateur.id, commande_id, accepte=False)
     return ReponseCourseSortie(commande_id=commande_id, reponse="declinee")
+
+
+# ------------------------------------------------------------------ course en cours (F-22, F-23)
+
+
+@routeur.get("/course-en-cours", response_model=CourseActiveSortie | None)
+async def course_active(
+    utilisateur: Utilisateur = Depends(livreur_connecte),
+    session: AsyncSession = Depends(obtenir_session),
+):
+    """La course actuellement attribuée au livreur (F-22, F-23)."""
+    return await courses.course_active(session, utilisateur.id)
+
+
+@routeur.post(
+    "/course-en-cours/{commande_id}/enlever",
+    response_model=ChangementEtatCourseSortie,
+    status_code=status.HTTP_200_OK,
+)
+async def marquer_colis_enleve(
+    commande_id: uuid.UUID,
+    utilisateur: Utilisateur = Depends(livreur_connecte),
+    session: AsyncSession = Depends(obtenir_session),
+    redis: Redis = Depends(obtenir_redis),
+):
+    """Le livreur valide la prise en charge du colis chez l'expéditeur (F-23)."""
+    horodatage = await courses.marquer_enlevee(session, redis, utilisateur.id, commande_id)
+    return ChangementEtatCourseSortie(
+        commande_id=commande_id, nouvel_etat="enlevee", horodatage=horodatage
+    )
+
+
+@routeur.post(
+    "/course-en-cours/{commande_id}/livrer",
+    response_model=ChangementEtatCourseSortie,
+    status_code=status.HTTP_200_OK,
+)
+async def valider_remise_colis(
+    commande_id: uuid.UUID,
+    donnees: ValidationLivraisonEntree,
+    utilisateur: Utilisateur = Depends(livreur_connecte),
+    session: AsyncSession = Depends(obtenir_session),
+    redis: Redis = Depends(obtenir_redis),
+):
+    """Le livreur valide la livraison avec le code secret à usage unique reçu par le destinataire (F-23)."""
+    horodatage = await courses.valider_livraison(
+        session, redis, utilisateur.id, commande_id, donnees.code_confirmation
+    )
+    return ChangementEtatCourseSortie(
+        commande_id=commande_id, nouvel_etat="livree", horodatage=horodatage
+    )
+
+
+@routeur.post(
+    "/course-en-cours/{commande_id}/incident",
+    response_model=SignalementIncidentSortie,
+    status_code=status.HTTP_200_OK,
+)
+async def signaler_incident_course(
+    commande_id: uuid.UUID,
+    donnees: SignalementIncidentEntree,
+    utilisateur: Utilisateur = Depends(livreur_connecte),
+    session: AsyncSession = Depends(obtenir_session),
+):
+    """Enregistre un incident du livreur et met fin à la tentative de livraison (F-24)."""
+    horodatage = await courses.signaler_incident(
+        session, utilisateur.id, commande_id, donnees.motif
+    )
+    return SignalementIncidentSortie(
+        commande_id=commande_id,
+        motif=donnees.motif,
+        nouvel_etat="echec_livraison",
+        horodatage=horodatage,
+    )

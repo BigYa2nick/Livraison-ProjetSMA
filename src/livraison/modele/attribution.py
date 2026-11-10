@@ -1,13 +1,24 @@
 """Règles pures de l'attribution : rayon des tours, exclusions, choix de l'offre.
 
 Du Python simple, sans réseau ni base : ces règles se testent instantanément. Les agents (Dispatcher,
-Commande) et le service d'attribution les appliquent ; ils n'en dupliquent aucune.
+Commande) et le service d'attribution les appliquent ; ils n'en dupliquent aucune (sauf le tri SQL des
+commandes en attente, qui suit `rang_priorite` : un test vérifie qu'ils vont ensemble).
 Voir docs/contract-net.md.
 """
 
 from collections.abc import Iterable
 
 from livraison.modele.cout import Offre, classer_offres
+from livraison.persistance.enums import Priorite
+
+
+def rang_priorite(priorite: str | None) -> int:
+    """Rang de traitement d'une commande (F-35) : 0 pour une commande urgente, 1 pour toute autre.
+
+    Le plus petit rang passe en premier. Une valeur inconnue ou absente compte comme « normale » : une
+    commande ne doit jamais être bloquée par une priorité mal écrite.
+    """
+    return 0 if priorite == Priorite.URGENTE else 1
 
 
 def rayon_suivant(rayon_m: int, *, facteur: float, maximum: int) -> int:

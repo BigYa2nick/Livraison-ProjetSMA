@@ -4,7 +4,8 @@ Les commandes arriveront par l'API au lot 4 ; en attendant, ce script joue ce r�
 
     python scripts/creer_commande_test.py
     python scripts/creer_commande_test.py --enlevement 5.3236,-4.0197 --livraison 5.36,-3.99 --poids 3
-    python scripts/creer_commande_test.py --suivre      # affiche ensuite l'attribution, 90 s au plus
+    python scripts/creer_commande_test.py --suivre      # suit la course jusqu'à sa fin
+    python scripts/creer_commande_test.py --annuler-tests  # annule les commandes de démonstration inachevées
 
 Prérequis : PostgreSQL et Redis (docker compose up -d), la base migrée, et `python -m livraison.agents`
 lancé dans un autre terminal avec au moins un livreur en ligne, validé, dont l'application envoie sa
@@ -14,8 +15,8 @@ position. La base utilisée est celle de .env (POSTGRES_DB).
 import argparse
 import asyncio
 import sys
-import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -27,13 +28,24 @@ from livraison.persistance.enums import (  # noqa: E402
     Priorite,
     Role,
     TailleColis,
+    TypeEvenement,
 )
-from livraison.persistance.modeles import Commande, Utilisateur  # noqa: E402
+from livraison.persistance.modeles import Commande, Evenement, Utilisateur  # noqa: E402
 from livraison.persistance.session import FabriqueSession, moteur  # noqa: E402
 from livraison.services import evenements  # noqa: E402
 from livraison.services.redis_client import creer_redis  # noqa: E402
+from livraison.services.securite import generer_code, hacher_code  # noqa: E402
 
 TELEPHONE_CLIENT_TEST = "+2250700000001"
+TELEPHONE_DESTINATAIRE_TEST = "+2250700000002"
+ETATS_TEST_EN_COURS = (
+    EtatCommande.CREEE,
+    EtatCommande.VALIDEE,
+    EtatCommande.RECHERCHE_LIVREUR,
+    EtatCommande.ATTRIBUEE,
+    EtatCommande.ENLEVEE,
+    EtatCommande.EN_LIVRAISON,
+)
 
 
 def lire_point(texte: str) -> tuple[float, float]:
@@ -63,7 +75,9 @@ async def client_de_test(session) -> Utilisateur:
     return client
 
 
-async def creer(args) -> str:
+async def creer(args) -> tuple[str, str]:
+    code_secret = generer_code()
+    destinataire_tel = TELEPHONE_DESTINATAIRE_TEST
     async with FabriqueSession() as session:
         client = await client_de_test(session)
         commande = Commande(
@@ -75,10 +89,12 @@ async def creer(args) -> str:
             adresse_livraison=f"Point de test {args.livraison[0]:.4f},{args.livraison[1]:.4f}",
             livraison=point_wkt(args.livraison),
             destinataire_nom="Destinataire test",
-            destinataire_telephone="+2250700000002",
+            destinataire_telephone=destinataire_tel,
             taille_colis=TailleColis.PETIT,
             poids_kg=args.poids,
+            distance_m=4500,
             prix_xof=args.prix,
+            code_confirmation_hash=hacher_code(destinataire_tel, code_secret),
             validee_le=func.now(),
         )
         session.add(commande)
@@ -92,15 +108,56 @@ async def creer(args) -> str:
                   "commande à leur prochaine réconciliation (toutes les 30 s).")
     finally:
         await redis.aclose()
-    return commande_id
+    return commande_id, code_secret
 
 
-async def suivre(commande_id: str, duree_s: float) -> None:
-    fin = time.monotonic() + duree_s
+async def annuler_commandes_test(session) -> list[str]:
+    """Annule uniquement les commandes inachevées créées par ce script de démonstration."""
+    resultat = await session.scalars(
+        select(Commande)
+        .join(Utilisateur, Utilisateur.id == Commande.client_id)
+        .where(
+            Utilisateur.telephone == TELEPHONE_CLIENT_TEST,
+            Commande.destinataire_nom == "Destinataire test",
+            Commande.destinataire_telephone == TELEPHONE_DESTINATAIRE_TEST,
+            Commande.adresse_enlevement.like("Point de test %"),
+            Commande.adresse_livraison.like("Point de test %"),
+            Commande.etat.in_(ETATS_TEST_EN_COURS),
+        )
+        .with_for_update()
+    )
+    commandes = list(resultat)
+    maintenant = datetime.now(UTC)
+    for commande in commandes:
+        ancien_etat = commande.etat
+        commande.etat = EtatCommande.ANNULEE
+        commande.terminee_le = maintenant
+        session.add(
+            Evenement(
+                commande_id=commande.id,
+                type=TypeEvenement.CHANGEMENT_ETAT,
+                auteur="outil:creer_commande_test",
+                detail={"de": ancien_etat.value, "vers": EtatCommande.ANNULEE.value},
+            )
+        )
+    await session.flush()
+    return [str(commande.id) for commande in commandes]
+
+
+async def annuler_commandes_test_en_base() -> list[str]:
+    async with FabriqueSession() as session:
+        commande_ids = await annuler_commandes_test(session)
+        await session.commit()
+    return commande_ids
+
+
+async def suivre(commande_id: str) -> None:
     dernier = None
-    while time.monotonic() < fin:
+    while True:
         async with FabriqueSession() as session:
             commande = await session.get(Commande, uuid.UUID(commande_id))
+            if commande is None:
+                raise RuntimeError(f"Commande de test introuvable : {commande_id}")
             await session.refresh(commande)
             vue = (commande.etat.value, commande.tentatives_attribution, commande.rayon_recherche_m,
                    None if commande.livreur_id is None else str(commande.livreur_id))
@@ -108,11 +165,17 @@ async def suivre(commande_id: str, duree_s: float) -> None:
             etat, tour, rayon, livreur = vue
             print(f"  état={etat}  tour={tour}  rayon={rayon} m  livreur={livreur}")
             dernier = vue
-        if vue[0] == EtatCommande.ATTRIBUEE.value:
-            print("Commande attribuée.")
-            return
+            if vue[0] == EtatCommande.ATTRIBUEE.value:
+                print("Commande attribuée. Ctrl+C annule les commandes de test inachevées.")
+            elif vue[0] in (
+                EtatCommande.LIVREE.value,
+                EtatCommande.CLOTUREE.value,
+                EtatCommande.ANNULEE.value,
+                EtatCommande.ECHEC_LIVRAISON.value,
+            ):
+                print(f"Commande terminée ({vue[0]}).")
+                return
         await asyncio.sleep(1)
-    print("Pas encore attribuée (livreur en ligne, validé, avec une position récente ? Il a 30 s pour confirmer).")
 
 
 async def main() -> int:
@@ -122,13 +185,36 @@ async def main() -> int:
     analyseur.add_argument("--poids", type=float, default=2.0, help="poids du colis en kg")
     analyseur.add_argument("--prix", type=int, default=2000, help="prix en XOF")
     analyseur.add_argument("--urgente", action="store_true")
-    analyseur.add_argument("--suivre", action="store_true", help="afficher l'attribution pendant 90 s")
+    analyseur.add_argument(
+        "--suivre",
+        action="store_true",
+        help="suivre la commande jusqu'à sa fin (Ctrl+C annule les commandes de test inachevées)",
+    )
+    analyseur.add_argument(
+        "--annuler-tests",
+        action="store_true",
+        help="annuler les commandes de démonstration inachevées créées par ce script",
+    )
     args = analyseur.parse_args()
     try:
-        commande_id = await creer(args)
+        if args.annuler_tests:
+            commande_ids = await annuler_commandes_test_en_base()
+            print(f"{len(commande_ids)} commande(s) de test inachevée(s) annulée(s).")
+            return 0
+
+        commande_id, code_secret = await creer(args)
         print(f"Commande {commande_id} créée (état validee) et annoncée.")
+        print(f"Référence de commande : {commande_id}")
+        print(f"Code secret de livraison (F-23) : {code_secret}")
+        print("Saisis ces 6 chiffres dans l'app livreur pour cette commande précise (zéro initial inclus).")
         if args.suivre:
-            await suivre(commande_id, 90.0)
+            try:
+                await suivre(commande_id)
+            except asyncio.CancelledError:
+                print("\nCtrl+C reçu : annulation des commandes de test inachevées...")
+                commande_ids = await annuler_commandes_test_en_base()
+                print(f"{len(commande_ids)} commande(s) de test annulée(s).")
+                return 130
     finally:
         await moteur.dispose()
     return 0

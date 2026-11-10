@@ -144,7 +144,7 @@ async def test_livreurs_eligibles(session):
     en_attente = await creer_livreur(session, statut=StatutValidation.EN_ATTENTE)
     ok2 = await creer_livreur(session)
     demandes = [ok2, hors_ligne, "pas-un-uuid", suspendu, ok, en_attente, str(uuid.uuid4())]
-    assert await svc.livreurs_eligibles(session, demandes) == [ok2, ok]
+    assert await svc.livreurs_eligibles(session, demandes) == [ok2, ok, en_attente]
     assert await svc.livreurs_eligibles(session, []) == []
     assert await svc.livreurs_eligibles(session, ["x", "y"]) == []
 

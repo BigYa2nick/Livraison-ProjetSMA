@@ -113,3 +113,12 @@ class TypeEvenement(StrEnum):
     PAIEMENT = "paiement"
     NOTIFICATION = "notification"
     ACTION_MANUELLE = "action_manuelle"  # réattribution ou annulation par le répartiteur
+
+
+class MotifIncident(StrEnum):
+    """Motifs proposés au livreur pour signaler un incident de course (F-24)."""
+
+    DESTINATAIRE_ABSENT = "destinataire_absent"
+    ADRESSE_INTROUVABLE = "adresse_introuvable"
+    PANNE = "panne"
+    ACCIDENT = "accident"

@@ -17,6 +17,9 @@ import flet as ft
 import flet_map as fm
 import httpx
 import websockets
+from websockets.exceptions import InvalidStatus
+
+from livraison.interfaces.messages_suivi import message_refus_ws
 
 CENTRE_ABIDJAN = (5.3364, -4.0267)
 SEUIL_PERIMEE_S = 30
@@ -124,17 +127,28 @@ async def main(page: ft.Page):
 
     async def ecouter(adresse_ws: str):
         """Reste connecté au flux ; se reconnecte seul après une coupure."""
+        delai_reconnexion = 2
         while True:
             try:
+                connecte_le = asyncio.get_running_loop().time()
                 async with websockets.connect(adresse_ws) as flux:
                     entete.value = "Connecté : suivi en direct"
                     page.update()
                     async for brut in flux:
                         sur_message(json.loads(brut))
-            except Exception as e:  # noqa: BLE001
+                duree_connectee = asyncio.get_running_loop().time() - connecte_le
+                if duree_connectee >= 10:
+                    delai_reconnexion = 2
+            except InvalidStatus as e:
+                entete.value = message_refus_ws(e.response.status_code)
+                section_connexion.visible = True
+                page.update()
+                return
+            except (OSError, websockets.exceptions.WebSocketException) as e:
                 entete.value = f"Flux interrompu ({type(e).__name__}), nouvelle tentative..."
                 page.update()
-            await asyncio.sleep(2)
+            await asyncio.sleep(delai_reconnexion)
+            delai_reconnexion = min(delai_reconnexion * 2, 30)
 
     async def boucle_rafraichissement():
         while True:
